@@ -94,4 +94,15 @@ networks:
 
 volumes:
   strikeshield-postgres-data:
+    name: strikeshield-postgres-data
+  # Must be pinned to this exact bare name: the Orchestrator's dynamically-
+  # created step containers (via Docker.DotNet, not docker-compose) mount
+  # it by this literal name in Orchestrator__ScanOutputVolumeName. Without
+  # an explicit `name:` here, Compose would create it as
+  # "<project>_strikeshield-scan-output" instead — the Orchestrator's own
+  # compose-managed mount would resolve correctly, but Docker.DotNet's
+  # bare-name reference would silently auto-create a second, different,
+  # empty volume, and every step container would see an empty /scan-output
+  # missing whatever the Orchestrator wrote.
   strikeshield-scan-output:
+    name: strikeshield-scan-output

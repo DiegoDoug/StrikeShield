@@ -69,6 +69,16 @@ public class PlaybookExecutor : IPlaybookExecutor
                         : StepRunStatus.Failed;
                 stepRun.CompletedAt = DateTimeOffset.UtcNow;
 
+                // Container stdout/stderr is the only way to diagnose a
+                // nonzero exit or timeout after the container's been
+                // removed — surface it via the API instead of requiring
+                // someone to have been watching `docker compose logs`
+                // live when it happened.
+                if (stepRun.Status != StepRunStatus.Completed && !string.IsNullOrWhiteSpace(result.ContainerLogs))
+                {
+                    stepRun.ErrorMessage = Truncate(result.ContainerLogs, 4000);
+                }
+
                 if (result.OutputContent is not null)
                 {
                     _dbContext.Artifacts.Add(new Artifact
@@ -166,6 +176,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         var containerId = createResponse.ID;
         var timedOut = false;
         long exitCode = -1;
+        string? containerLogs = null;
 
         try
         {
@@ -203,6 +214,25 @@ public class PlaybookExecutor : IPlaybookExecutor
         }
         finally
         {
+            // Must capture logs before removal — they aren't retrievable
+            // once the container is gone.
+            try
+            {
+                var logStream = await _dockerClient.Containers.GetContainerLogsAsync(
+                    containerId,
+                    tty: false,
+                    new ContainerLogsParameters { ShowStdout = true, ShowStderr = true },
+                    CancellationToken.None);
+                var (stdout, stderr) = await logStream.ReadOutputToEndAsync(CancellationToken.None);
+                containerLogs = string.Join(
+                    Environment.NewLine,
+                    new[] { stdout, stderr }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            }
+            catch (Exception logEx)
+            {
+                _logger.LogWarning(logEx, "Failed to capture logs for container {ContainerId}", containerId);
+            }
+
             try
             {
                 await _dockerClient.Containers.RemoveContainerAsync(
@@ -218,7 +248,7 @@ public class PlaybookExecutor : IPlaybookExecutor
 
         var outputContent = await TryReadOutputFileAsync(outputDir, outputFileName);
 
-        return new StepExecutionResult(exitCode, timedOut, containerId, outputContent, outputFileName);
+        return new StepExecutionResult(exitCode, timedOut, containerId, outputContent, outputFileName, containerLogs);
     }
 
     private static async Task<string?> TryReadOutputFileAsync(string outputDir, string fileName)
@@ -232,10 +262,14 @@ public class PlaybookExecutor : IPlaybookExecutor
         return await File.ReadAllTextAsync(path);
     }
 
+    private static string Truncate(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength];
+
     private sealed record StepExecutionResult(
         long ExitCode,
         bool TimedOut,
         string ContainerId,
         string? OutputContent,
-        string OutputFileName);
+        string OutputFileName,
+        string? ContainerLogs);
 }

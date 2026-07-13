@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using StrikeShield.Application.Common;
 using StrikeShield.Infrastructure.HealthChecks;
 using StrikeShield.Infrastructure.Persistence;
 
@@ -19,6 +20,8 @@ public static class DependencyInjection
 
         services.AddDbContext<StrikeShieldDbContext>(options =>
             options.UseNpgsql(connectionString));
+
+        services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<StrikeShieldDbContext>());
 
         services
             .AddHealthChecks()

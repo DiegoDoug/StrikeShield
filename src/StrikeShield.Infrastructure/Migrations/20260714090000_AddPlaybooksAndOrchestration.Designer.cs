@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using StrikeShield.Infrastructure.Persistence;
 
 #nullable disable
@@ -9,9 +10,11 @@ using StrikeShield.Infrastructure.Persistence;
 namespace StrikeShield.Infrastructure.Migrations
 {
     [DbContext(typeof(StrikeShieldDbContext))]
-    partial class StrikeShieldDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260714090000_AddPlaybooksAndOrchestration")]
+    partial class AddPlaybooksAndOrchestration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

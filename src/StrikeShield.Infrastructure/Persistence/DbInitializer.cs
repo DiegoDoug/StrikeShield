@@ -14,9 +14,14 @@ namespace StrikeShield.Infrastructure.Persistence;
 /// and create a Client/Project/Target/Engagement immediately after
 /// `docker compose up` with no manual DB setup. Full multi-tenant
 /// organization management arrives in Phase 10 — see docs/PHASED_PLAN.md.
+///
+/// Phase 2 additionally seeds the "nuclei-quick" Playbook (a single Nuclei
+/// step) so the Orchestrator has something to run out of the box.
 /// </summary>
 public static class DbInitializer
 {
+    public const string NucleiQuickPlaybookSlug = "nuclei-quick";
+
     public static async Task MigrateAndSeedAsync(IServiceProvider serviceProvider)
     {
         using var scope = serviceProvider.CreateScope();
@@ -24,17 +29,26 @@ public static class DbInitializer
 
         var dbContext = provider.GetRequiredService<StrikeShieldDbContext>();
         var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(DbInitializer));
+        var configuration = provider.GetRequiredService<IConfiguration>();
 
         logger.LogInformation("Applying pending EF Core migrations...");
         await dbContext.Database.MigrateAsync();
 
+        await SeedOrganizationAndAdminAsync(dbContext, configuration, provider, logger);
+        await SeedNucleiQuickPlaybookAsync(dbContext, logger);
+    }
+
+    private static async Task SeedOrganizationAndAdminAsync(
+        StrikeShieldDbContext dbContext,
+        IConfiguration configuration,
+        IServiceProvider provider,
+        ILogger logger)
+    {
         if (await dbContext.Organizations.AnyAsync())
         {
-            logger.LogInformation("Seed data already present, skipping.");
             return;
         }
 
-        var configuration = provider.GetRequiredService<IConfiguration>();
         var passwordHasher = provider.GetRequiredService<IPasswordHasherService>();
 
         var seedOrgName = configuration["SeedAdmin:OrganizationName"] ?? "StrikeShield";
@@ -64,5 +78,38 @@ public static class DbInitializer
             "SeedAdmin__Password env var) before first boot and rotate it afterwards.",
             seedOrgName,
             seedEmail);
+    }
+
+    private static async Task SeedNucleiQuickPlaybookAsync(StrikeShieldDbContext dbContext, ILogger logger)
+    {
+        if (await dbContext.Playbooks.AnyAsync(p => p.Slug == NucleiQuickPlaybookSlug))
+        {
+            return;
+        }
+
+        var playbook = new Playbook
+        {
+            Slug = NucleiQuickPlaybookSlug,
+            Name = "Nuclei Quick Scan",
+            Description = "A single-step playbook that runs a Nuclei template scan against the target."
+        };
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 1,
+            ToolName = "nuclei",
+            ImageRepository = "projectdiscovery/nuclei",
+            ImageTag = "latest",
+            ArgsTemplate = "-u {target} -jsonl -o {output} -severity critical,high,medium",
+            TimeoutSeconds = 300,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        dbContext.Playbooks.Add(playbook);
+        await dbContext.SaveChangesAsync();
+
+        logger.LogInformation("Seeded playbook '{Slug}'.", NucleiQuickPlaybookSlug);
     }
 }

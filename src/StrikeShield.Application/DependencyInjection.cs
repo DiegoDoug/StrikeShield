@@ -3,6 +3,7 @@ using StrikeShield.Application.Auth;
 using StrikeShield.Application.Clients;
 using StrikeShield.Application.Engagements;
 using StrikeShield.Application.Organizations;
+using StrikeShield.Application.Playbooks;
 using StrikeShield.Application.Projects;
 using StrikeShield.Application.ScanJobs;
 using StrikeShield.Application.Targets;
@@ -22,6 +23,7 @@ public static class DependencyInjection
         services.AddScoped<IProjectService, ProjectService>();
         services.AddScoped<ITargetService, TargetService>();
         services.AddScoped<IEngagementService, EngagementService>();
+        services.AddScoped<IPlaybookService, PlaybookService>();
         services.AddScoped<IScanJobService, ScanJobService>();
 
         return services;

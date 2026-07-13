@@ -85,6 +85,7 @@ app.MapClientsEndpoints();
 app.MapProjectsEndpoints();
 app.MapTargetsEndpoints();
 app.MapEngagementsEndpoints();
+app.MapPlaybooksEndpoints();
 app.MapScanJobsEndpoints();
 
 app.Run();

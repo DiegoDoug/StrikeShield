@@ -22,5 +22,11 @@ public static class ScanJobsEndpoints
 
         group.MapGet("/{id:guid}", async (Guid id, IScanJobService service, CancellationToken ct) =>
             Results.Ok(await service.GetAsync(id, ct)));
+
+        // Raw Nuclei (or any future tool's) output is retrievable via the
+        // artifacts nested in each step here — see docs/PHASED_PLAN.md
+        // Phase 2 acceptance criteria.
+        group.MapGet("/{id:guid}/steps", async (Guid id, IScanJobService service, CancellationToken ct) =>
+            Results.Ok(await service.GetStepsAsync(id, ct)));
     }
 }

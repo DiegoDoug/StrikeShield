@@ -16,7 +16,11 @@ public interface IAppDbContext
     DbSet<Project> Projects { get; }
     DbSet<Target> Targets { get; }
     DbSet<Engagement> Engagements { get; }
+    DbSet<Playbook> Playbooks { get; }
+    DbSet<PlaybookStep> PlaybookSteps { get; }
     DbSet<ScanJob> ScanJobs { get; }
+    DbSet<StepRun> StepRuns { get; }
+    DbSet<Artifact> Artifacts { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

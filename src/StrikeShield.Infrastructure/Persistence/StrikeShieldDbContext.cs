@@ -17,7 +17,11 @@ public class StrikeShieldDbContext : DbContext, IAppDbContext
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<Target> Targets => Set<Target>();
     public DbSet<Engagement> Engagements => Set<Engagement>();
+    public DbSet<Playbook> Playbooks => Set<Playbook>();
+    public DbSet<PlaybookStep> PlaybookSteps => Set<PlaybookStep>();
     public DbSet<ScanJob> ScanJobs => Set<ScanJob>();
+    public DbSet<StepRun> StepRuns => Set<StepRun>();
+    public DbSet<Artifact> Artifacts => Set<Artifact>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

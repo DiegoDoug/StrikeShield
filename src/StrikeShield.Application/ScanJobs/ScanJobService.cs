@@ -6,11 +6,12 @@ using StrikeShield.Domain.Enums;
 namespace StrikeShield.Application.ScanJobs;
 
 /// <summary>
-/// The one launch path every scan request goes through. Phase 1 only
-/// stubs execution (a ScanJob is created as Queued and nothing runs it
-/// yet — that's Phase 2's Docker orchestrator), but the scope/authorization
-/// gate below is enforced exactly as it will be for every future step type,
-/// including Strix. See docs/ARCHITECTURE.md §4/§8.
+/// The one launch path every scan request goes through. The scope/
+/// authorization gate below is enforced exactly the same way for every
+/// step type, including Strix once it lands — see docs/ARCHITECTURE.md
+/// §4/§8. Execution itself is picked up asynchronously by the
+/// Orchestrator worker (Phase 2): this service only validates the
+/// request, resolves the named Playbook, and records the job as Queued.
 /// </summary>
 public class ScanJobService : IScanJobService
 {
@@ -40,6 +41,10 @@ public class ScanJobService : IScanJobService
                 "Target does not belong to the same project as the engagement.");
         }
 
+        var playbookSlug = request.PlaybookName.Trim();
+        var playbook = await _db.Playbooks.FirstOrDefaultAsync(p => p.Slug == playbookSlug, cancellationToken)
+            ?? throw new NotFoundException($"Playbook '{playbookSlug}' was not found.");
+
         var authorization = engagement.CheckAuthorizedForScan(DateTimeOffset.UtcNow);
         if (!authorization.IsAuthorized)
         {
@@ -50,19 +55,22 @@ public class ScanJobService : IScanJobService
         {
             EngagementId = engagement.Id,
             TargetId = target.Id,
-            PlaybookName = request.PlaybookName.Trim(),
+            PlaybookId = playbook.Id,
             Status = ScanJobStatus.Queued
         };
 
         _db.ScanJobs.Add(scanJob);
         await _db.SaveChangesAsync(cancellationToken);
 
+        scanJob.Playbook = playbook;
         return ScanJobResponse.FromEntity(scanJob);
     }
 
     public async Task<ScanJobResponse> GetAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var scanJob = await _db.ScanJobs.FirstOrDefaultAsync(s => s.Id == id, cancellationToken)
+        var scanJob = await _db.ScanJobs
+            .Include(s => s.Playbook)
+            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken)
             ?? throw new NotFoundException($"ScanJob '{id}' was not found.");
 
         return ScanJobResponse.FromEntity(scanJob);
@@ -70,7 +78,7 @@ public class ScanJobService : IScanJobService
 
     public async Task<IReadOnlyList<ScanJobResponse>> GetAllAsync(Guid? engagementId, CancellationToken cancellationToken = default)
     {
-        var query = _db.ScanJobs.AsQueryable();
+        var query = _db.ScanJobs.Include(s => s.Playbook).AsQueryable();
         if (engagementId is not null)
         {
             query = query.Where(s => s.EngagementId == engagementId);
@@ -78,5 +86,23 @@ public class ScanJobService : IScanJobService
 
         var scanJobs = await query.OrderBy(s => s.CreatedAt).ToListAsync(cancellationToken);
         return scanJobs.Select(ScanJobResponse.FromEntity).ToList();
+    }
+
+    public async Task<IReadOnlyList<StepRunResponse>> GetStepsAsync(Guid scanJobId, CancellationToken cancellationToken = default)
+    {
+        var scanJobExists = await _db.ScanJobs.AnyAsync(s => s.Id == scanJobId, cancellationToken);
+        if (!scanJobExists)
+        {
+            throw new NotFoundException($"ScanJob '{scanJobId}' was not found.");
+        }
+
+        var stepRuns = await _db.StepRuns
+            .Include(s => s.PlaybookStep)
+            .Include(s => s.Artifacts)
+            .Where(s => s.ScanJobId == scanJobId)
+            .OrderBy(s => s.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return stepRuns.Select(StepRunResponse.FromEntity).ToList();
     }
 }

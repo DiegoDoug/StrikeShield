@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: strikeshield
+          POSTGRES_USER: strikeshield
+          POSTGRES_PASSWORD: strikeshield
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strikeshield -d strikeshield"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ConnectionStrings__Postgres: "Host=localhost;Port=5432;Database=strikeshield;Username=strikeshield;Password=strikeshield"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore StrikeShield.sln
+
+      - name: Build
+        run: dotnet build StrikeShield.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test StrikeShield.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/*.trx"

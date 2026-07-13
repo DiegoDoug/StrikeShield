@@ -3,9 +3,11 @@ using StrikeShield.Domain.Enums;
 namespace StrikeShield.Domain.Entities;
 
 /// <summary>
-/// A single playbook run request. Stubbed in Phase 1 — it only records
-/// intent (Queued) once the scope gate passes. Real Docker-orchestrated
-/// execution lands in Phase 2.
+/// A single playbook run request against a Target, gated by its
+/// Engagement's approval/scope window (see Engagement.CheckAuthorizedForScan).
+/// Phase 2 wires this up to real Docker-orchestrated execution: the
+/// Orchestrator worker polls for Queued jobs and runs each PlaybookStep as
+/// an isolated container, recording progress as StepRun rows.
 /// </summary>
 public class ScanJob
 {
@@ -17,7 +19,11 @@ public class ScanJob
     public Guid TargetId { get; set; }
     public Target? Target { get; set; }
 
-    public string PlaybookName { get; set; } = string.Empty;
+    public Guid PlaybookId { get; set; }
+    public Playbook? Playbook { get; set; }
+
     public ScanJobStatus Status { get; set; } = ScanJobStatus.Queued;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public ICollection<StepRun> StepRuns { get; set; } = new List<StepRun>();
 }

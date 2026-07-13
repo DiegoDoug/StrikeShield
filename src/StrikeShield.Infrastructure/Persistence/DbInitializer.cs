@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +23,16 @@ public static class DbInitializer
 {
     public const string NucleiQuickPlaybookSlug = "nuclei-quick";
 
+    // Arbitrary fixed key for a Postgres session-level advisory lock. Any
+    // process calling MigrateAndSeedAsync concurrently against the same
+    // database — multiple WebApplicationFactory-built test hosts in one
+    // xUnit run (different collections run in parallel), or multiple
+    // replicas of this API starting up together in a real deployment —
+    // serializes on this lock instead of racing to CREATE TABLE
+    // "__EFMigrationsHistory" (which fails for all but one racer with a
+    // Postgres catalog-level duplicate-key error).
+    private const long MigrationLockKey = 958301001;
+
     public static async Task MigrateAndSeedAsync(IServiceProvider serviceProvider)
     {
         using var scope = serviceProvider.CreateScope();
@@ -31,11 +42,31 @@ public static class DbInitializer
         var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(DbInitializer));
         var configuration = provider.GetRequiredService<IConfiguration>();
 
-        logger.LogInformation("Applying pending EF Core migrations...");
-        await dbContext.Database.MigrateAsync();
+        var connection = dbContext.Database.GetDbConnection();
+        await connection.OpenAsync();
 
-        await SeedOrganizationAndAdminAsync(dbContext, configuration, provider, logger);
-        await SeedNucleiQuickPlaybookAsync(dbContext, logger);
+        try
+        {
+            await ExecuteNonQueryAsync(connection, $"SELECT pg_advisory_lock({MigrationLockKey})");
+
+            logger.LogInformation("Applying pending EF Core migrations...");
+            await dbContext.Database.MigrateAsync();
+
+            await SeedOrganizationAndAdminAsync(dbContext, configuration, provider, logger);
+            await SeedNucleiQuickPlaybookAsync(dbContext, logger);
+        }
+        finally
+        {
+            await ExecuteNonQueryAsync(connection, $"SELECT pg_advisory_unlock({MigrationLockKey})");
+            await connection.CloseAsync();
+        }
+    }
+
+    private static async Task ExecuteNonQueryAsync(DbConnection connection, string sql)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task SeedOrganizationAndAdminAsync(

@@ -1,5 +1,6 @@
 using Docker.DotNet;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using StrikeShield.Infrastructure;
 using StrikeShield.Orchestrator;
 

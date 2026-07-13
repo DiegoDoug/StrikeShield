@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - strikeshield-net
 
   redis:
     image: redis:7-alpine
@@ -24,6 +26,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - strikeshield-net
 
   api:
     build:
@@ -46,6 +50,48 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - strikeshield-net
+
+  # OWASP Juice Shop: the standing, intentionally-vulnerable safe test
+  # target for every phase from here on (docs/PHASED_PLAN.md Phase 2+).
+  # Only ever scan targets you own or are authorized to test — this one
+  # is explicitly built for exactly that purpose.
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "${STRIKESHIELD_JUICE_SHOP_PORT:-3000}:3000"
+    networks:
+      - strikeshield-net
+
+  # Docker-outside-of-Docker: mounts the host's Docker socket so it can
+  # launch one isolated container per playbook step (docs/ARCHITECTURE.md
+  # §5). Deliberately the ONLY service with that mount — never add it to
+  # the public-facing api service (docs/ARCHITECTURE.md §8).
+  orchestrator:
+    build:
+      context: .
+      dockerfile: src/StrikeShield.Orchestrator/Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=strikeshield;Username=strikeshield;Password=strikeshield"
+      Docker__Host: "unix:///var/run/docker.sock"
+      Orchestrator__NetworkName: strikeshield-net
+      Orchestrator__ScanOutputVolumeName: strikeshield-scan-output
+      Orchestrator__ScanOutputMountPath: /scan-output
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - strikeshield-scan-output:/scan-output
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - strikeshield-net
+
+networks:
+  strikeshield-net:
+    name: strikeshield-net
 
 volumes:
   strikeshield-postgres-data:
+  strikeshield-scan-output:

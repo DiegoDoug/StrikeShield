@@ -20,15 +20,20 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 1: core domain, JWT auth, and the scope/authorization gate.**
-Clients → Projects → Targets → Engagements, with a hard-enforced rule: no
-`ScanJob` can be created against an Engagement that isn't approved and
-currently inside its scope window (`docs/ARCHITECTURE.md` §4/§8). Scan
-execution is still stubbed — a ScanJob just records `Queued` once the gate
-passes; the Docker orchestrator that actually runs tools lands in Phase 2.
+**Phase 2: the Docker orchestrator actually runs a tool.** A separate
+`StrikeShield.Orchestrator` worker (own container, the only one with
+Docker socket access) polls for `Queued` ScanJobs and runs each playbook
+step as an isolated, resource-bounded container — no leftover containers
+whether the step succeeds, fails, or times out. A seeded `nuclei-quick`
+playbook runs Nuclei against a target and its raw JSON-lines output lands
+in Postgres, retrievable via `GET /api/scan-jobs/{id}/steps`. OWASP Juice
+Shop is included as the standing safe test target.
 
-Also included: JWT bearer auth (a single seeded admin user), EF Core +
-Postgres migrations, and CRUD for every entity above.
+**Phase 1** (still active): Clients → Projects → Targets → Engagements,
+with a hard-enforced rule — no `ScanJob` can be created against an
+Engagement that isn't approved and currently inside its scope window
+(`docs/ARCHITECTURE.md` §4/§8) — plus JWT bearer auth (a single seeded
+admin user), EF Core + Postgres migrations, and CRUD for every entity.
 
 ## Quick start
 
@@ -96,7 +101,7 @@ CLIENT_ID=$(curl -s -X POST localhost:8080/api/clients -H "$AUTH" -H 'Content-Ty
 PROJECT_ID=$(curl -s -X POST localhost:8080/api/projects -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"clientId\":\"$CLIENT_ID\",\"name\":\"Q3 External Pentest\"}" | jq -r .id)
 TARGET_ID=$(curl -s -X POST localhost:8080/api/targets -H "$AUTH" -H 'Content-Type: application/json' \
-  -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"https://juice-shop.example.test\"}" | jq -r .id)
+  -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"http://juice-shop:3000\"}" | jq -r .id)
 ENGAGEMENT_ID=$(curl -s -X POST localhost:8080/api/engagements -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"projectId\":\"$PROJECT_ID\",\"name\":\"July Engagement\",\"scopeStart\":\"2026-01-01T00:00:00Z\",\"scopeEnd\":\"2027-01-01T00:00:00Z\"}" | jq -r .id)
 
@@ -118,6 +123,35 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/api/scan-jobs -H
 The same flow is asserted end-to-end in
 `tests/StrikeShield.Api.Tests/ScopeGateTests.cs`.
 
+### Phase 2 walkthrough (Nuclei actually runs, via curl)
+
+Continuing with the `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID` from above (target
+pointed at `http://juice-shop:3000`, engagement approved):
+
+```bash
+# 1. Launch the seeded nuclei-quick playbook
+SCAN_JOB_ID=$(curl -s -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}" | jq -r .id)
+
+# 2. Poll until Completed — the Orchestrator picks it up within ~5s and
+#    Nuclei's first run also fetches its template set, so this can take a
+#    couple of minutes the very first time.
+watch -n 5 "curl -s localhost:8080/api/scan-jobs/$SCAN_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. Raw Nuclei output (JSON-lines), once Completed
+curl -s localhost:8080/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH" | jq .
+
+# 4. Confirm no leftover step containers
+docker ps -a --filter "name=strikeshield-step"
+# -> empty
+```
+
+If a step comes back `Failed` instead of `Completed`, check
+`errorMessage`/`exitCode` in the steps response — the most likely local
+cause is Nuclei's first-run template download taking longer than the
+step's timeout (`PlaybookStep.TimeoutSeconds`, 300s by default) on a slow
+connection.
+
 ## Solution layout
 
 ```
@@ -126,6 +160,7 @@ src/
   StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing)
   StrikeShield.Infrastructure/  EF Core + Postgres, migrations, seeding, health checks
   StrikeShield.Api/             ASP.NET Core Web API host, JWT wiring, endpoints
+  StrikeShield.Orchestrator/    Docker.DotNet worker: runs playbook steps as isolated containers
 tests/
   StrikeShield.Api.Tests/       integration tests (WebApplicationFactory)
 docs/
@@ -136,10 +171,12 @@ docs/
 ## Legal / scope
 
 StrikeShield launches active security tools (including an autonomous AI
-exploitation agent) against configured targets. Only ever point it at
-systems you own or are explicitly authorized to test. The scope/authorization
-gate added in Phase 1 (`docs/ARCHITECTURE.md` §4/§8) enforces this at the
-data-model level — no `ScanJob` can be created against an unapproved or
-out-of-window Engagement — but scan *execution* itself is still stubbed
-until Phase 2's Docker orchestrator lands, so this repo does not yet launch
-any real tool against any target.
+exploitation agent, in a later phase) against configured targets. Only
+ever point it at systems you own or are explicitly authorized to test. The
+scope/authorization gate from Phase 1 (`docs/ARCHITECTURE.md` §4/§8)
+enforces this at the data-model level — no `ScanJob` can be created against
+an unapproved or out-of-window Engagement — and as of Phase 2 this repo
+does actively launch tools (currently Nuclei) in Docker containers, so that
+gate is now live, not theoretical. The bundled OWASP Juice Shop service is
+there specifically so you have a target you're authorized to scan without
+needing one of your own yet.

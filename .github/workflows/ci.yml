@@ -51,3 +51,112 @@ jobs:
         with:
           name: test-results
           path: "**/*.trx"
+
+  compose-smoke-test:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the full stack
+        run: docker compose up --build -d
+
+      - name: Wait for API to report healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/health | grep -q '"status":"Healthy"'; then
+              echo "API is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy in time."
+          docker compose logs
+          exit 1
+
+      - name: Run Phase 1 + Phase 2 acceptance flow
+        run: |
+          set -euo pipefail
+          BASE_URL=http://localhost:8080
+
+          TOKEN=$(curl -sf -X POST "$BASE_URL/api/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"admin@strikeshield.local","password":"ChangeMe123!"}' | jq -r .token)
+          AUTH="Authorization: Bearer $TOKEN"
+
+          ORG_ID=$(curl -sf "$BASE_URL/api/organizations" -H "$AUTH" | jq -r '.[0].id')
+
+          CLIENT_ID=$(curl -sf -X POST "$BASE_URL/api/clients" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"organizationId\":\"$ORG_ID\",\"name\":\"CI Client\"}" | jq -r .id)
+          PROJECT_ID=$(curl -sf -X POST "$BASE_URL/api/projects" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"clientId\":\"$CLIENT_ID\",\"name\":\"CI Project\"}" | jq -r .id)
+          TARGET_ID=$(curl -sf -X POST "$BASE_URL/api/targets" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"http://juice-shop:3000\"}" | jq -r .id)
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LATER=$(date -u -d "+7 days" +"%Y-%m-%dT%H:%M:%SZ")
+          ENGAGEMENT_ID=$(curl -sf -X POST "$BASE_URL/api/engagements" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"projectId\":\"$PROJECT_ID\",\"name\":\"CI Engagement\",\"rulesOfEngagement\":\"Standard rules of engagement.\",\"authorizationEvidenceUri\":\"https://example.test/authorization-letter.pdf\",\"scopeStart\":\"$NOW\",\"scopeEnd\":\"$LATER\",\"allowedScopeRules\":[\"juice-shop\"]}" | jq -r .id)
+
+          echo "Confirming the scope gate rejects an unapproved engagement..."
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/scan-jobs" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}")
+          if [ "$STATUS" != "403" ]; then
+            echo "Expected 403 for an unapproved engagement, got $STATUS"
+            exit 1
+          fi
+
+          curl -sf -X POST "$BASE_URL/api/engagements/$ENGAGEMENT_ID/approve" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d '{"approvedBy":"ci@strikeshield.local"}' > /dev/null
+
+          echo "Launching the nuclei-quick scan..."
+          SCAN_JOB_ID=$(curl -sf -X POST "$BASE_URL/api/scan-jobs" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}" | jq -r .id)
+
+          echo "Polling ScanJob $SCAN_JOB_ID until it reaches a terminal status..."
+          SCAN_STATUS="Queued"
+          for i in $(seq 1 90); do
+            SCAN_STATUS=$(curl -sf "$BASE_URL/api/scan-jobs/$SCAN_JOB_ID" -H "$AUTH" | jq -r .status)
+            echo "  [$i] status=$SCAN_STATUS"
+            case "$SCAN_STATUS" in
+              Completed|Failed|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+
+          echo "Steps/artifacts:"
+          STEPS_JSON=$(curl -sf "$BASE_URL/api/scan-jobs/$SCAN_JOB_ID/steps" -H "$AUTH")
+          echo "$STEPS_JSON" | jq .
+
+          if [ "$SCAN_STATUS" != "Completed" ]; then
+            echo "ScanJob did not reach Completed (status=$SCAN_STATUS). Orchestrator logs:"
+            docker compose logs orchestrator
+            exit 1
+          fi
+
+          ARTIFACT_COUNT=$(echo "$STEPS_JSON" | jq '[.[].artifacts[]] | length')
+          if [ "$ARTIFACT_COUNT" -lt 1 ]; then
+            echo "Expected at least one artifact from the completed step, found $ARTIFACT_COUNT."
+            exit 1
+          fi
+          echo "Found $ARTIFACT_COUNT artifact(s) — raw tool output is retrievable via the API."
+
+      - name: Verify no leaked step containers
+        if: always()
+        run: |
+          LEFTOVER=$(docker ps -a --filter "name=strikeshield-step" -q)
+          if [ -n "$LEFTOVER" ]; then
+            echo "Leaked step containers found:"
+            docker ps -a --filter "name=strikeshield-step"
+            exit 1
+          fi
+          echo "No leaked step containers."
+
+      - name: Show stack logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

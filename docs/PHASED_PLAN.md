@@ -77,33 +77,58 @@ the scope-gate rejection end to end; the same flow is provable via curl
 
 ---
 
-## Phase 2 — Scan orchestrator + first real tool (Nuclei) against a safe target
+## Phase 2 — Scan orchestrator + first real tool (Nuclei) against a safe target ✅
 
 **Goal:** Prove the Docker-orchestration primitive end to end with the
 simplest tool before adding Strix or multi-step DAGs.
 
 **Deliverables:**
-- `StrikeShield.Orchestrator` worker service using `Docker.DotNet`.
-- Add `juice-shop` (OWASP Juice Shop, intentionally vulnerable) as a compose
-  service — this becomes the standing safe test target for every phase from
-  here on.
-- `Playbook`/`PlaybookStep`/`ScanJob`/`StepRun` entities (single-step
-  playbooks only in this phase: "Nuclei quick scan").
-- Orchestrator launches a pinned `projectdiscovery/nuclei` container against
-  `http://juice-shop:3000`, with per-step timeout + resource limits, output
-  bind-mounted, container removed after collection.
-- Scan status endpoint (`Queued → Running → Completed/Failed/TimedOut`).
+- `StrikeShield.Orchestrator`: a separate worker service (own project,
+  own container, own Dockerfile) using `Docker.DotNet` — deliberately not
+  merged into the Api process, since it's the only component that mounts
+  the Docker socket (docs/ARCHITECTURE.md §5/§8).
+- `juice-shop` (OWASP Juice Shop) added as a compose service — the standing
+  safe test target for every phase from here on.
+- `Playbook`/`PlaybookStep`/`ScanJob`/`StepRun`/`Artifact` entities. `ScanJob`
+  now references a real `Playbook` (by slug, e.g. `"nuclei-quick"`) instead
+  of a free-text name. A single-step "nuclei-quick" playbook is seeded on
+  first boot.
+- The Orchestrator polls for `Queued` ScanJobs, and for each step launches a
+  pinned `projectdiscovery/nuclei` container attached to the shared
+  `strikeshield-net` network (so it can resolve `juice-shop`), bounded by
+  the step's configured memory/CPU/timeout, with output written to a
+  Docker volume (`strikeshield-scan-output`) shared with the Orchestrator's
+  own filesystem view — collected into an `Artifact` row and the container
+  removed immediately after, whether it succeeded, failed, or timed out.
+- `GET /api/scan-jobs/{id}/steps` exposes each step's status and artifacts
+  (`Queued → Running → Completed/Failed/TimedOut` at both the ScanJob and
+  StepRun level).
+
+> **Schema change note:** this phase changes the ScanJobs table (drops
+> `PlaybookName`, adds a required `PlaybookId` FK). If you already ran
+> Phase 1 locally, drop your Postgres volume first: `docker compose down -v`.
 
 **Test it:**
 ```bash
+docker compose down -v   # only needed if you ran Phase 1 before this
 docker compose up --build
-curl -X POST localhost:8080/api/scan-jobs -d '{"targetId":"...","playbook":"nuclei-quick"}'
-curl localhost:8080/api/scan-jobs/{id}   # poll until Completed
-docker ps -a | grep strikeshield-step    # expect: nothing left running/lingering
+
+# 1. Log in, create client -> project -> target (juice-shop) -> engagement,
+#    approve it (see README.md Phase 1 walkthrough for the exact curl calls).
+# 2. Launch the seeded playbook against the target:
+curl -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
+# 3. Poll until Completed (the Orchestrator picks it up within ~5s):
+curl localhost:8080/api/scan-jobs/$SCAN_JOB_ID -H "$AUTH"
+# 4. Raw Nuclei output, once Completed:
+curl localhost:8080/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH"
+# 5. No leaked containers:
+docker ps -a --filter "name=strikeshield-step"   # expect: empty
 ```
-**Acceptance:** scan reaches `Completed`, raw Nuclei JSON artifact is
-retrievable via API, and `docker ps -a` shows no leaked containers/networks
-after completion.
+**Acceptance:** the ScanJob reaches `Completed` (or `Failed`/`TimedOut` if
+Nuclei itself errors — check the step's `errorMessage`), the raw Nuclei
+JSON-lines output is retrievable via `GET /api/scan-jobs/{id}/steps`, and
+`docker ps -a` shows no `strikeshield-step-*` containers left behind.
 
 ---
 

@@ -102,7 +102,10 @@ public static class DbInitializer
             ImageRepository = "projectdiscovery/nuclei",
             ImageTag = "latest",
             ArgsTemplate = "-u {target} -jsonl -o {output} -severity critical,high,medium",
-            TimeoutSeconds = 300,
+            // Generous timeout: Nuclei's first-ever run in a fresh
+            // container also downloads its template set, which can take a
+            // while depending on connection speed.
+            TimeoutSeconds = 600,
             MemoryLimitBytes = 512L * 1024 * 1024,
             NanoCpus = 1_000_000_000L
         });

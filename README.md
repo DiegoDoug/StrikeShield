@@ -54,6 +54,18 @@ curl -s http://localhost:8080/health | jq
 
 Swagger UI: http://localhost:8080/swagger
 
+> **Port already in use?** If `docker compose up` fails with
+> `Bind for 0.0.0.0:8080 failed: port is already allocated` (or the same for
+> 5432/6379), something else on your machine already has that port —
+> another project, a local Postgres/Redis install, or (on Windows) IIS
+> Express or a leftover container from a previous run. Either stop
+> whatever's holding it, or remap it: copy `.env.example` to `.env` and set
+> `STRIKESHIELD_API_PORT` / `STRIKESHIELD_POSTGRES_PORT` /
+> `STRIKESHIELD_REDIS_PORT` to a free port, then re-run
+> `docker compose up --build` (adjust the `localhost:8080` URLs above to
+> match). `docker ps -a` will show if a stray container from an earlier
+> attempt is still holding the port.
+
 To run tests locally (requires a reachable Postgres — either
 `docker compose up -d postgres` first, or point `ConnectionStrings__Postgres`
 at one):

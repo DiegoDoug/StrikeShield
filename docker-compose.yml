@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: strikeshield
       POSTGRES_PASSWORD: strikeshield
     ports:
-      - "5432:5432"
+      - "${STRIKESHIELD_POSTGRES_PORT:-5432}:5432"
     volumes:
       - strikeshield-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${STRIKESHIELD_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -30,7 +30,7 @@ services:
       context: .
       dockerfile: src/StrikeShield.Api/Dockerfile
     ports:
-      - "8080:8080"
+      - "${STRIKESHIELD_API_PORT:-8080}:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080

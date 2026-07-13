@@ -78,6 +78,12 @@ jobs:
       - name: Run Phase 1 + Phase 2 acceptance flow
         run: |
           set -euo pipefail
+          # Juice Shop logs a full stack trace for every "unexpected path" a
+          # scanner probes, which drowns out everything else once Nuclei
+          # starts running. Tee this step's own output to a file and upload
+          # it as an artifact below so a failure is diagnosable without
+          # wading through that noise in `docker compose logs`.
+          exec > >(tee /tmp/acceptance-flow.log) 2>&1
           BASE_URL=http://localhost:8080
 
           TOKEN=$(curl -sf -X POST "$BASE_URL/api/auth/login" \
@@ -153,9 +159,21 @@ jobs:
           fi
           echo "No leaked step containers."
 
-      - name: Show stack logs on failure
+      - name: Upload acceptance flow output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-flow-log
+          path: /tmp/acceptance-flow.log
+          if-no-files-found: ignore
+
+      - name: Show api/orchestrator/postgres logs on failure
         if: failure()
-        run: docker compose logs
+        # Deliberately excludes juice-shop: once Nuclei starts probing it,
+        # its catch-all error handler logs a full stack trace per
+        # unmatched path, which is expected scanner noise, not a failure
+        # signal, and drowns out the services we actually need to debug.
+        run: docker compose logs --tail=500 api orchestrator postgres
 
       - name: Tear down
         if: always()

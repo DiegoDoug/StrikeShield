@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using StrikeShield.Application.Auth;
 using StrikeShield.Application.Clients;
 using StrikeShield.Application.Engagements;
+using StrikeShield.Application.Findings;
+using StrikeShield.Application.Findings.Adapters;
 using StrikeShield.Application.Organizations;
 using StrikeShield.Application.Playbooks;
 using StrikeShield.Application.Projects;
@@ -25,6 +27,14 @@ public static class DependencyInjection
         services.AddScoped<IEngagementService, EngagementService>();
         services.AddScoped<IPlaybookService, PlaybookService>();
         services.AddScoped<IScanJobService, ScanJobService>();
+
+        services.AddScoped<IFindingAdapter, NucleiFindingAdapter>();
+        services.AddScoped<IFindingAdapter, SarifFindingAdapter>();
+        services.AddScoped<IFindingAdapter, ZapFindingAdapter>();
+        services.AddScoped<IFindingAdapter, NmapFindingAdapter>();
+        services.AddScoped<IFindingIngestionService, FindingIngestionService>();
+        services.AddScoped<ICorrelator, Correlator>();
+        services.AddScoped<IFindingService, FindingService>();
 
         return services;
     }

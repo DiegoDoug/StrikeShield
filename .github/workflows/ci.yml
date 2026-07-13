@@ -75,7 +75,7 @@ jobs:
           docker compose logs
           exit 1
 
-      - name: Run Phase 1 + Phase 2 acceptance flow
+      - name: Run Phase 1 + Phase 2 + Phase 3 acceptance flow
         run: |
           set -euo pipefail
           # Juice Shop logs a full stack trace for every "unexpected path" a
@@ -147,6 +147,40 @@ jobs:
             exit 1
           fi
           echo "Found $ARTIFACT_COUNT artifact(s) — raw tool output is retrievable via the API."
+
+          echo "Launching the full-baseline scan (Nuclei + ZAP + nmap)..."
+          BASELINE_JOB_ID=$(curl -sf -X POST "$BASE_URL/api/scan-jobs" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-baseline\"}" | jq -r .id)
+
+          echo "Polling ScanJob $BASELINE_JOB_ID until it reaches a terminal status (ZAP's baseline step is the slow one)..."
+          BASELINE_STATUS="Queued"
+          for i in $(seq 1 150); do
+            BASELINE_STATUS=$(curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID" -H "$AUTH" | jq -r .status)
+            echo "  [$i] status=$BASELINE_STATUS"
+            case "$BASELINE_STATUS" in
+              Completed|Failed|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+
+          echo "Findings:"
+          FINDINGS_JSON=$(curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/findings" -H "$AUTH")
+          echo "$FINDINGS_JSON" | jq .
+
+          if [ "$BASELINE_STATUS" != "Completed" ]; then
+            echo "full-baseline ScanJob did not reach Completed (status=$BASELINE_STATUS). Steps:"
+            curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/steps" -H "$AUTH" | jq .
+            echo "Orchestrator logs:"
+            docker compose logs orchestrator
+            exit 1
+          fi
+
+          DISTINCT_TOOL_COUNT=$(echo "$FINDINGS_JSON" | jq '[.[].sourceTool] | unique | length')
+          if [ "$DISTINCT_TOOL_COUNT" -lt 2 ]; then
+            echo "Expected findings from at least 2 distinct tools, found $DISTINCT_TOOL_COUNT."
+            exit 1
+          fi
+          echo "Findings normalized from $DISTINCT_TOOL_COUNT distinct tools — cross-tool normalization confirmed."
 
       - name: Verify no leaked step containers
         if: always()

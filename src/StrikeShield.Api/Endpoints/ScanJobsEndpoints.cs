@@ -1,3 +1,4 @@
+using StrikeShield.Application.Findings;
 using StrikeShield.Application.ScanJobs;
 
 namespace StrikeShield.Api.Endpoints;
@@ -28,5 +29,10 @@ public static class ScanJobsEndpoints
         // Phase 2 acceptance criteria.
         group.MapGet("/{id:guid}/steps", async (Guid id, IScanJobService service, CancellationToken ct) =>
             Results.Ok(await service.GetStepsAsync(id, ct)));
+
+        // Normalized findings across every tool that ran in this ScanJob —
+        // see docs/PHASED_PLAN.md Phase 3 acceptance criteria.
+        group.MapGet("/{id:guid}/findings", async (Guid id, IFindingService service, CancellationToken ct) =>
+            Results.Ok(await service.GetForScanJobAsync(id, ct)));
     }
 }

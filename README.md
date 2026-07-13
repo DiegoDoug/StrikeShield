@@ -20,14 +20,25 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 2: the Docker orchestrator actually runs a tool.** A separate
-`StrikeShield.Orchestrator` worker (own container, the only one with
-Docker socket access) polls for `Queued` ScanJobs and runs each playbook
-step as an isolated, resource-bounded container — no leftover containers
-whether the step succeeds, fails, or times out. A seeded `nuclei-quick`
-playbook runs Nuclei against a target and its raw JSON-lines output lands
-in Postgres, retrievable via `GET /api/scan-jobs/{id}/steps`. OWASP Juice
-Shop is included as the standing safe test target.
+**Phase 3: cross-tool finding normalization + correlation.** Nuclei (JSONL),
+a generic SARIF importer (ready for Strix/Semgrep/CodeQL/Trivy in later
+phases), OWASP ZAP (`-J` JSON), and nmap (`-oX` XML) all normalize into one
+`Finding` table via per-format adapters — see
+`src/StrikeShield.Application/Findings/Adapters/`. nmap's host/port output
+also becomes `Asset` rows. A seeded `full-baseline` playbook (Nuclei + ZAP
+baseline + nmap vuln scripts) exercises all three; `GET
+/api/scan-jobs/{id}/findings` returns them normalized, with a
+`Correlator` deterministically grouping findings that share an exact
+dedupe fingerprint (same normalized target/CWE-or-CVE/location) into one
+`CorrelationGroup` — proven by a fixture-based test
+(`tests/StrikeShield.Api.Tests/CorrelatorTests.cs`), not live-scan
+nondeterminism.
+
+**Phase 2** (still active): a separate `StrikeShield.Orchestrator` worker
+(own container, the only one with Docker socket access) polls for `Queued`
+ScanJobs and runs each playbook step as an isolated, resource-bounded
+container — no leftover containers whether the step succeeds, fails, or
+times out. OWASP Juice Shop is included as the standing safe test target.
 
 **Phase 1** (still active): Clients → Projects → Targets → Engagements,
 with a hard-enforced rule — no `ScanJob` can be created against an
@@ -152,12 +163,33 @@ cause is Nuclei's first-run template download taking longer than the
 step's timeout (`PlaybookStep.TimeoutSeconds`, 300s by default) on a slow
 connection.
 
+### Phase 3 walkthrough (normalized findings across 3 tools, via curl)
+
+Continuing with the same `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID`:
+
+```bash
+# 1. Launch the seeded full-baseline playbook (Nuclei + ZAP baseline + nmap)
+BASELINE_JOB_ID=$(curl -s -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-baseline\"}" | jq -r .id)
+
+# 2. Poll until Completed — ZAP's baseline scan is the slow step (up to 900s)
+watch -n 5 "curl -s localhost:8080/api/scan-jobs/$BASELINE_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. Normalized findings, one shape regardless of source tool
+curl -s localhost:8080/api/scan-jobs/$BASELINE_JOB_ID/findings -H "$AUTH" | jq '[.[] | {sourceTool, title, severity, cweIds}]'
+```
+
+Cross-tool correlation (grouping the same underlying issue found by two
+different tools into one `CorrelationGroup`) is proven deterministically
+with a known fixture in `tests/StrikeShield.Api.Tests/CorrelatorTests.cs`
+rather than depending on live Nuclei/ZAP output happening to overlap.
+
 ## Solution layout
 
 ```
 src/
   StrikeShield.Domain/          entities, enums, and the scope-gate business rule
-  StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing)
+  StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing), finding adapters + Correlator
   StrikeShield.Infrastructure/  EF Core + Postgres, migrations, seeding, health checks
   StrikeShield.Api/             ASP.NET Core Web API host, JWT wiring, endpoints
   StrikeShield.Orchestrator/    Docker.DotNet worker: runs playbook steps as isolated containers

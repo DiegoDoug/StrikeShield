@@ -12,7 +12,7 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phases 0 and 1 implemented** (see repo root). Phase 2+ are
+Status: **Phases 0, 1, 2, and 3 implemented** (see repo root). Phase 4+ are
 specified below, ready to build next.
 
 ---
@@ -132,7 +132,7 @@ JSON-lines output is retrievable via `GET /api/scan-jobs/{id}/steps`, and
 
 ---
 
-## Phase 3 — Normalization layer + SARIF + 3 more tools
+## Phase 3 — Normalization layer + SARIF + 3 more tools ✅
 
 **Goal:** Unified `Finding`/`Asset` model, proving the "normalize everything"
 promise with tools that have genuinely different native formats.

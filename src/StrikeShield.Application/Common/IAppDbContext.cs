@@ -21,6 +21,10 @@ public interface IAppDbContext
     DbSet<ScanJob> ScanJobs { get; }
     DbSet<StepRun> StepRuns { get; }
     DbSet<Artifact> Artifacts { get; }
+    DbSet<Finding> Findings { get; }
+    DbSet<FindingEvidence> FindingEvidence { get; }
+    DbSet<Asset> Assets { get; }
+    DbSet<CorrelationGroup> CorrelationGroups { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

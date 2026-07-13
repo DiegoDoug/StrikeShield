@@ -26,4 +26,5 @@ public class ScanJob
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<StepRun> StepRuns { get; set; } = new List<StepRun>();
+    public ICollection<Finding> Findings { get; set; } = new List<Finding>();
 }

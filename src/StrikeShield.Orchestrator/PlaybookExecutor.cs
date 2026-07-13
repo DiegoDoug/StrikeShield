@@ -2,6 +2,7 @@ using Docker.DotNet;
 using Docker.DotNet.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using StrikeShield.Application.Findings;
 using StrikeShield.Domain.Entities;
 using StrikeShield.Domain.Enums;
 using StrikeShield.Infrastructure.Persistence;
@@ -20,17 +21,23 @@ public class PlaybookExecutor : IPlaybookExecutor
 {
     private readonly IDockerClient _dockerClient;
     private readonly StrikeShieldDbContext _dbContext;
+    private readonly IFindingIngestionService _findingIngestionService;
+    private readonly ICorrelator _correlator;
     private readonly OrchestratorOptions _options;
     private readonly ILogger<PlaybookExecutor> _logger;
 
     public PlaybookExecutor(
         IDockerClient dockerClient,
         StrikeShieldDbContext dbContext,
+        IFindingIngestionService findingIngestionService,
+        ICorrelator correlator,
         IOptions<OrchestratorOptions> options,
         ILogger<PlaybookExecutor> logger)
     {
         _dockerClient = dockerClient;
         _dbContext = dbContext;
+        _findingIngestionService = findingIngestionService;
+        _correlator = correlator;
         _options = options.Value;
         _logger = logger;
     }
@@ -88,6 +95,17 @@ public class PlaybookExecutor : IPlaybookExecutor
                         ContentType = "text/plain",
                         Content = result.OutputContent
                     });
+
+                    // Normalize the raw tool output into Findings/Assets
+                    // (docs/ARCHITECTURE.md §6) — a no-op if no adapter is
+                    // registered for this tool yet.
+                    await _findingIngestionService.IngestAsync(
+                        scanJob.Id,
+                        stepRun.Id,
+                        target.Id,
+                        step.ToolName,
+                        result.OutputContent,
+                        cancellationToken);
                 }
 
                 if (stepRun.Status != StepRunStatus.Completed)
@@ -112,6 +130,10 @@ public class PlaybookExecutor : IPlaybookExecutor
             }
         }
 
+        // Correlate whatever Findings were ingested even on partial failure
+        // — an earlier completed step's findings are still worth deduping.
+        await _correlator.CorrelateAsync(scanJob.Id, cancellationToken);
+
         scanJob.Status = overallSuccess ? ScanJobStatus.Completed : ScanJobStatus.Failed;
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -123,7 +145,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         Guid stepRunId,
         CancellationToken cancellationToken)
     {
-        const string outputFileName = "output.jsonl";
+        var outputFileName = OutputFileNameFor(step.ToolName);
         var outputDir = Path.Combine(_options.ScanOutputMountPath, scanJobId.ToString(), stepRunId.ToString());
         var containerOutputPath = $"{outputDir}/{outputFileName}";
 
@@ -134,6 +156,7 @@ public class PlaybookExecutor : IPlaybookExecutor
 
         var args = step.ArgsTemplate
             .Replace("{target}", target.Value)
+            .Replace("{targetHost}", ExtractHost(target.Value))
             .Replace("{output}", containerOutputPath)
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .ToList();
@@ -261,6 +284,22 @@ public class PlaybookExecutor : IPlaybookExecutor
 
         return await File.ReadAllTextAsync(path);
     }
+
+    private static string OutputFileNameFor(string toolName) => toolName.ToLowerInvariant() switch
+    {
+        "nuclei" => "output.jsonl",
+        "zap" => "output.json",
+        "nmap" => "output.xml",
+        _ => "output.txt"
+    };
+
+    /// <summary>
+    /// nmap (and similar host-oriented tools) need a bare host/IP, not a
+    /// full URL with scheme/port — extracts one from a Target.Value that
+    /// may be either (e.g. "http://juice-shop:3000" or "juice-shop").
+    /// </summary>
+    private static string ExtractHost(string targetValue) =>
+        Uri.TryCreate(targetValue, UriKind.Absolute, out var uri) ? uri.Host : targetValue;
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];

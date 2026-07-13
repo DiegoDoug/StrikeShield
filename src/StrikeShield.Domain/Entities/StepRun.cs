@@ -27,4 +27,6 @@ public class StepRun
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<Artifact> Artifacts { get; set; } = new List<Artifact>();
+    public ICollection<Finding> Findings { get; set; } = new List<Finding>();
+    public ICollection<Asset> DiscoveredAssets { get; set; } = new List<Asset>();
 }

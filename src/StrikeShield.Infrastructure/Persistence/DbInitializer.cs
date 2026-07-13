@@ -17,11 +17,14 @@ namespace StrikeShield.Infrastructure.Persistence;
 /// organization management arrives in Phase 10 — see docs/PHASED_PLAN.md.
 ///
 /// Phase 2 additionally seeds the "nuclei-quick" Playbook (a single Nuclei
-/// step) so the Orchestrator has something to run out of the box.
+/// step) so the Orchestrator has something to run out of the box. Phase 3
+/// adds "full-baseline" (Nuclei + ZAP + nmap) to prove cross-tool finding
+/// normalization/correlation with genuinely different native formats.
 /// </summary>
 public static class DbInitializer
 {
     public const string NucleiQuickPlaybookSlug = "nuclei-quick";
+    public const string FullBaselinePlaybookSlug = "full-baseline";
 
     // Arbitrary fixed key for a Postgres session-level advisory lock. Any
     // process calling MigrateAndSeedAsync concurrently against the same
@@ -54,6 +57,7 @@ public static class DbInitializer
 
             await SeedOrganizationAndAdminAsync(dbContext, configuration, provider, logger);
             await SeedNucleiQuickPlaybookAsync(dbContext, logger);
+            await SeedFullBaselinePlaybookAsync(dbContext, logger);
         }
         finally
         {
@@ -145,5 +149,70 @@ public static class DbInitializer
         await dbContext.SaveChangesAsync();
 
         logger.LogInformation("Seeded playbook '{Slug}'.", NucleiQuickPlaybookSlug);
+    }
+
+    private static async Task SeedFullBaselinePlaybookAsync(StrikeShieldDbContext dbContext, ILogger logger)
+    {
+        if (await dbContext.Playbooks.AnyAsync(p => p.Slug == FullBaselinePlaybookSlug))
+        {
+            return;
+        }
+
+        var playbook = new Playbook
+        {
+            Slug = FullBaselinePlaybookSlug,
+            Name = "Full Baseline Scan",
+            Description = "Runs Nuclei, an OWASP ZAP baseline scan, and an nmap vuln-script scan " +
+                "against the target, normalizing all three into one Finding table (docs/PHASED_PLAN.md Phase 3)."
+        };
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 1,
+            ToolName = "nuclei",
+            ImageRepository = "projectdiscovery/nuclei",
+            ImageTag = "latest",
+            ArgsTemplate = "-u {target} -jsonl -o {output} -severity critical,high,medium",
+            TimeoutSeconds = 600,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 2,
+            ToolName = "zap",
+            ImageRepository = "ghcr.io/zaproxy/zaproxy",
+            ImageTag = "stable",
+            // -I: don't fail the container on WARN-level alerts — findings
+            // are the expected, desired output of a baseline scan, not an
+            // execution error. -J's path wins over ZAP's own /zap/wrk/
+            // base dir because it's given as an absolute path here.
+            ArgsTemplate = "zap-baseline.py -t {target} -J {output} -I",
+            TimeoutSeconds = 900,
+            MemoryLimitBytes = 1024L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 3,
+            ToolName = "nmap",
+            ImageRepository = "instrumentisto/nmap",
+            ImageTag = "latest",
+            // {targetHost}: nmap needs a bare host/IP, not a scheme+port URL.
+            ArgsTemplate = "-oX {output} -T4 --script vuln {targetHost}",
+            TimeoutSeconds = 600,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        dbContext.Playbooks.Add(playbook);
+        await dbContext.SaveChangesAsync();
+
+        logger.LogInformation("Seeded playbook '{Slug}'.", FullBaselinePlaybookSlug);
     }
 }

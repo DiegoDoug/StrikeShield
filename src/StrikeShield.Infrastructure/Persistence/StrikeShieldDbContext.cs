@@ -22,6 +22,10 @@ public class StrikeShieldDbContext : DbContext, IAppDbContext
     public DbSet<ScanJob> ScanJobs => Set<ScanJob>();
     public DbSet<StepRun> StepRuns => Set<StepRun>();
     public DbSet<Artifact> Artifacts => Set<Artifact>();
+    public DbSet<Finding> Findings => Set<Finding>();
+    public DbSet<FindingEvidence> FindingEvidence => Set<FindingEvidence>();
+    public DbSet<Asset> Assets => Set<Asset>();
+    public DbSet<CorrelationGroup> CorrelationGroups => Set<CorrelationGroup>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

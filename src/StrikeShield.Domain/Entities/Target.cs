@@ -13,4 +13,5 @@ public class Target
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<ScanJob> ScanJobs { get; set; } = new List<ScanJob>();
+    public ICollection<Asset> Assets { get; set; } = new List<Asset>();
 }

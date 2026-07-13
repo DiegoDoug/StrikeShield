@@ -12,8 +12,8 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phase 0 implemented in this session** (see repo root). Phases 1+
-are specified below, ready to build next.
+Status: **Phases 0 and 1 implemented** (see repo root). Phase 2+ are
+specified below, ready to build next.
 
 ---
 
@@ -43,33 +43,37 @@ curl -s http://localhost:8080/health | jq
 
 ---
 
-## Phase 1 — Core domain: Clients, Projects, Targets, Engagements, scope gate
+## Phase 1 — Core domain: Clients, Projects, Targets, Engagements, scope gate ✅
 
 **Goal:** The non-negotiable authorization/scope model from
 `ARCHITECTURE.md` §4, plus basic CRUD, before any scanning exists.
 
 **Deliverables:**
-- EF Core entities + migrations: `Organization`, `User`, `Client`,
+- EF Core entities + migrations: `Organization`, `AppUser`, `Client`,
   `Project`, `Target`, `Engagement` (with `authorizationEvidenceUri`,
-  `approvedBy/At`, `scopeStart/End`, `allowedScopeRules`).
-- REST endpoints: CRUD for all of the above.
+  `approvedBy/At`, `scopeStart/End`, `allowedScopeRules`), `ScanJob`.
+- REST endpoints: CRUD for clients/projects/targets, create+approve for
+  engagements, create+read for scan-jobs, a read-only organizations list.
 - Domain rule: creating a `ScanJob` (stubbed in this phase — real execution
-  is Phase 2) against a `Target` whose `Engagement` isn't approved/in-window
-  returns `403` with a clear reason, enforced in the Application layer, unit
-  tested.
-- JWT-based auth (ASP.NET Identity) with a single seeded admin user — full
-  RBAC comes later (Phase 10).
+  is Phase 2) against an `Engagement` that isn't approved/in-window returns
+  `403` with a clear reason (`Engagement.CheckAuthorizedForScan`, enforced in
+  `ScanJobService`), unit/integration tested.
+- JWT bearer auth (`Microsoft.Extensions.Identity.Core`'s `PasswordHasher`
+  + hand-issued JWTs) with a single seeded admin user — full RBAC and the
+  EF Identity membership system come later (Phase 10).
 
 **Test it:**
 ```bash
 docker compose up --build
-# via Swagger/curl:
-# 1. create client -> project -> target -> engagement (unapproved)
-# 2. POST /api/scan-jobs against that target -> expect 403 "engagement not authorized"
+# See README.md "Phase 1 walkthrough" for the full curl sequence:
+# 1. login, create client -> project -> target -> engagement (unapproved)
+# 2. POST /api/scan-jobs against it -> expect 403
 # 3. approve the engagement -> retry -> expect 202
 ```
-**Acceptance:** integration test suite (`WebApplicationFactory`) covers the
-happy path and the scope-gate rejection; both provable via curl too.
+**Acceptance:** `tests/StrikeShield.Api.Tests/ScopeGateTests.cs` (an
+integration test using `WebApplicationFactory`) covers the happy path and
+the scope-gate rejection end to end; the same flow is provable via curl
+(README.md).
 
 ---
 

@@ -35,6 +35,12 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=strikeshield;Username=strikeshield;Password=strikeshield"
+      # Dev-only defaults below. Override via a local .env file (see
+      # .env.example) before running against anything but a throwaway
+      # local Postgres — see docs/PHASED_PLAN.md Phase 1.
+      Jwt__Key: "${STRIKESHIELD_JWT_KEY:-dev-only-signing-key-change-me-before-any-real-deployment-32chars+}"
+      SeedAdmin__Email: "${STRIKESHIELD_SEED_ADMIN_EMAIL:-admin@strikeshield.local}"
+      SeedAdmin__Password: "${STRIKESHIELD_SEED_ADMIN_PASSWORD:-ChangeMe123!}"
     depends_on:
       postgres:
         condition: service_healthy

@@ -20,11 +20,15 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 0 (this commit): repo bootstrap.** Clean Architecture solution
-skeleton (`Domain` / `Application` / `Infrastructure` / `Api`), Postgres +
-Redis via Docker Compose, a `/health` endpoint that actually verifies DB
-connectivity, and CI (build + test on every push). No business logic yet —
-that starts in Phase 1.
+**Phase 1: core domain, JWT auth, and the scope/authorization gate.**
+Clients → Projects → Targets → Engagements, with a hard-enforced rule: no
+`ScanJob` can be created against an Engagement that isn't approved and
+currently inside its scope window (`docs/ARCHITECTURE.md` §4/§8). Scan
+execution is still stubbed — a ScanJob just records `Queued` once the gate
+passes; the Docker orchestrator that actually runs tools lands in Phase 2.
+
+Also included: JWT bearer auth (a single seeded admin user), EF Core +
+Postgres migrations, and CRUD for every entity above.
 
 ## Quick start
 
@@ -58,14 +62,58 @@ at one):
 dotnet test StrikeShield.sln
 ```
 
+### Phase 1 walkthrough (the scope-gate acceptance test, via curl)
+
+On first boot the API seeds one organization and one admin user
+(`admin@strikeshield.local` / `ChangeMe123!` by default — override via
+`.env`, see `.env.example`, before running this anywhere but local dev).
+
+```bash
+# 1. Log in and grab a token
+TOKEN=$(curl -s -X POST localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@strikeshield.local","password":"ChangeMe123!"}' | jq -r .token)
+AUTH="Authorization: Bearer $TOKEN"
+
+# 2. Get the seeded organization id
+ORG_ID=$(curl -s localhost:8080/api/organizations -H "$AUTH" | jq -r '.[0].id')
+
+# 3. Client -> Project -> Target -> Engagement (unapproved)
+CLIENT_ID=$(curl -s -X POST localhost:8080/api/clients -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"organizationId\":\"$ORG_ID\",\"name\":\"Acme Corp\"}" | jq -r .id)
+PROJECT_ID=$(curl -s -X POST localhost:8080/api/projects -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"clientId\":\"$CLIENT_ID\",\"name\":\"Q3 External Pentest\"}" | jq -r .id)
+TARGET_ID=$(curl -s -X POST localhost:8080/api/targets -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"https://juice-shop.example.test\"}" | jq -r .id)
+ENGAGEMENT_ID=$(curl -s -X POST localhost:8080/api/engagements -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"projectId\":\"$PROJECT_ID\",\"name\":\"July Engagement\",\"scopeStart\":\"2026-01-01T00:00:00Z\",\"scopeEnd\":\"2027-01-01T00:00:00Z\"}" | jq -r .id)
+
+# 4. Scan-job request against the unapproved engagement -> expect 403
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
+# -> 403
+
+# 5. Approve the engagement
+curl -s -X POST "localhost:8080/api/engagements/$ENGAGEMENT_ID/approve" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"approvedBy":"qa-lead@strikeshield.local"}'
+
+# 6. Same scan-job request again -> expect 202
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
+# -> 202
+```
+
+The same flow is asserted end-to-end in
+`tests/StrikeShield.Api.Tests/ScopeGateTests.cs`.
+
 ## Solution layout
 
 ```
 src/
-  StrikeShield.Domain/          entities & business rules (empty until Phase 1)
-  StrikeShield.Application/     use cases / orchestration services
-  StrikeShield.Infrastructure/  EF Core + Postgres, health checks, (later) Docker orchestration
-  StrikeShield.Api/             ASP.NET Core Web API host
+  StrikeShield.Domain/          entities, enums, and the scope-gate business rule
+  StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing)
+  StrikeShield.Infrastructure/  EF Core + Postgres, migrations, seeding, health checks
+  StrikeShield.Api/             ASP.NET Core Web API host, JWT wiring, endpoints
 tests/
   StrikeShield.Api.Tests/       integration tests (WebApplicationFactory)
 docs/
@@ -77,7 +125,9 @@ docs/
 
 StrikeShield launches active security tools (including an autonomous AI
 exploitation agent) against configured targets. Only ever point it at
-systems you own or are explicitly authorized to test. Phase 1 adds a
-hard-enforced scope/authorization gate — see `docs/ARCHITECTURE.md` §4 and
-§8 — but until that lands, this repo is scaffolding only and does not run
-any scans.
+systems you own or are explicitly authorized to test. The scope/authorization
+gate added in Phase 1 (`docs/ARCHITECTURE.md` §4/§8) enforces this at the
+data-model level — no `ScanJob` can be created against an unapproved or
+out-of-window Engagement — but scan *execution* itself is still stubbed
+until Phase 2's Docker orchestrator lands, so this repo does not yet launch
+any real tool against any target.

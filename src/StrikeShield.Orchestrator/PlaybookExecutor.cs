@@ -161,6 +161,33 @@ public class PlaybookExecutor : IPlaybookExecutor
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .ToList();
 
+        var mounts = new List<Mount>
+        {
+            new Mount
+            {
+                Type = "volume",
+                Source = _options.ScanOutputVolumeName,
+                Target = _options.ScanOutputMountPath
+            }
+        };
+
+        // zap-baseline.py hard-validates that /zap/wrk is mounted before
+        // accepting ANY file-based option (-J/-r/...), regardless of
+        // whether the path it's given is absolute — so it rejects our
+        // {output} path (elsewhere on the shared volume) unless this
+        // exact directory is also present. The actual file still lands
+        // at containerOutputPath since Python's os.path.join discards a
+        // base dir when joined with an absolute path.
+        if (step.ToolName.Equals("zap", StringComparison.OrdinalIgnoreCase))
+        {
+            mounts.Add(new Mount
+            {
+                Type = "volume",
+                Source = _options.ScanOutputVolumeName,
+                Target = "/zap/wrk"
+            });
+        }
+
         await _dockerClient.Images.CreateImageAsync(
             new ImagesCreateParameters { FromImage = step.ImageRepository, Tag = step.ImageTag },
             null,
@@ -183,15 +210,7 @@ public class PlaybookExecutor : IPlaybookExecutor
                     NetworkMode = _options.NetworkName,
                     Memory = step.MemoryLimitBytes,
                     NanoCPUs = step.NanoCpus,
-                    Mounts = new List<Mount>
-                    {
-                        new Mount
-                        {
-                            Type = "volume",
-                            Source = _options.ScanOutputVolumeName,
-                            Target = _options.ScanOutputMountPath
-                        }
-                    }
+                    Mounts = mounts
                 }
             },
             cancellationToken);

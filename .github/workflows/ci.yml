@@ -167,6 +167,13 @@ jobs:
           FINDINGS_JSON=$(curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/findings" -H "$AUTH")
           echo "$FINDINGS_JSON" | jq .
 
+          # Always dump each step's raw artifact content (unconditionally,
+          # not just on failure) — the only way to see exactly what ZAP/
+          # nmap actually wrote, to diagnose an adapter/schema mismatch
+          # versus a genuinely-empty scan result.
+          echo "Full-baseline steps (with raw artifact content):"
+          curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/steps" -H "$AUTH" | jq .
+
           if [ "$BASELINE_STATUS" != "Completed" ]; then
             echo "full-baseline ScanJob did not reach Completed (status=$BASELINE_STATUS). Steps:"
             curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/steps" -H "$AUTH" | jq .

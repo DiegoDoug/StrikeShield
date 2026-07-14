@@ -141,7 +141,10 @@ public static class DbInitializer
             // container also downloads its template set, which can take a
             // while depending on connection speed.
             TimeoutSeconds = 600,
-            MemoryLimitBytes = 512L * 1024 * 1024,
+            // The (unpinned) nuclei-templates set has been observed at
+            // 6000+ templates and growing every release; 512MB was
+            // observed OOM-killing the container (exit 137) mid-scan.
+            MemoryLimitBytes = 1024L * 1024 * 1024,
             NanoCpus = 1_000_000_000L
         });
 
@@ -175,7 +178,7 @@ public static class DbInitializer
             ImageTag = "latest",
             ArgsTemplate = "-u {target} -jsonl -o {output} -severity critical,high,medium",
             TimeoutSeconds = 600,
-            MemoryLimitBytes = 512L * 1024 * 1024,
+            MemoryLimitBytes = 1024L * 1024 * 1024,
             NanoCpus = 1_000_000_000L
         });
 

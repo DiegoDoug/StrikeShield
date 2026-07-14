@@ -50,6 +50,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      # The Kestrel listener only binds after Program.cs's
+      # DbInitializer.MigrateAndSeedAsync completes (it runs before
+      # app.Run()), so proving the port is listening is enough to prove
+      # migrations are done. No curl/wget/bash guaranteed in the aspnet
+      # base image, so check for a LISTEN socket on port 8080 (0x1F90)
+      # directly via /proc/net/tcp — needs only grep.
+      test: ["CMD-SHELL", "grep -q ':1F90' /proc/net/tcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     networks:
       - strikeshield-net
 
@@ -84,6 +95,14 @@ services:
       - strikeshield-scan-output:/scan-output
     depends_on:
       postgres:
+        condition: service_healthy
+      # Not just for network dependency ordering: api's healthcheck only
+      # passes once Program.cs's migrate-and-seed step has completed
+      # (see api's healthcheck comment above), so this also guarantees the
+      # ScanJobs/Playbooks tables exist before this service's first poll —
+      # closing a race that otherwise self-heals on the next 5s poll but
+      # spams a PostgresException in the meantime.
+      api:
         condition: service_healthy
     networks:
       - strikeshield-net

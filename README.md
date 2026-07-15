@@ -20,7 +20,20 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 3: cross-tool finding normalization + correlation.** Nuclei (JSONL),
+**Phase 4: Strix, the AI pentesting engine, is wired in.** `strikeshield/strix-runner`
+(a slim Python base with `pip install strix-agent`, built locally by
+`docker compose build`) runs as a new `strix` playbook step type — BYOK via
+`STRIKESHIELD_STRIX_LLM_API_KEY` (see `.env.example`). Strix's findings
+come back through the same generic SARIF importer from Phase 3, now
+reading each SARIF run's own `tool.driver.name` so Strix's findings show
+up with `sourceTool: "strix"` (previously hardcoded to `"sarif"`). Because
+Strix's own runtime needs to talk to the Docker daemon directly (it spawns
+its own sandbox container for dynamic testing), the `strix` step is the
+one deliberate, documented exception to "only the Orchestrator touches
+docker.sock." A seeded `strix-quick` playbook is ready to run once you
+supply your own LLM key.
+
+**Phase 3** (still active): cross-tool finding normalization + correlation. Nuclei (JSONL),
 a generic SARIF importer (ready for Strix/Semgrep/CodeQL/Trivy in later
 phases), OWASP ZAP (`-J` JSON), and nmap (`-oX` XML) all normalize into one
 `Finding` table via per-format adapters — see
@@ -184,6 +197,32 @@ different tools into one `CorrelationGroup`) is proven deterministically
 with a known fixture in `tests/StrikeShield.Api.Tests/CorrelatorTests.cs`
 rather than depending on live Nuclei/ZAP output happening to overlap.
 
+### Phase 4 walkthrough (the AI pentesting engine, via curl)
+
+Requires your own LLM API key — copy `.env.example` to `.env` and set
+`STRIKESHIELD_STRIX_LLM_API_KEY` first. Every other tool/phase works
+without this; Strix specifically has nothing to run against without it.
+
+Continuing with the same `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID`:
+
+```bash
+# 1. Launch the seeded strix-quick playbook (budget-capped at $1.00)
+STRIX_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"strix-quick\"}" | jq -r .id)
+
+# 2. Poll until Completed — an LLM-driven agent run, expect several minutes
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$STRIX_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. Strix's findings, normalized the same as every other tool's
+curl -s localhost:8085/api/scan-jobs/$STRIX_JOB_ID/findings -H "$AUTH" | jq '[.[] | select(.sourceTool=="strix")]'
+
+# 4. run.json (cost/budget metadata) is stored alongside findings.sarif
+curl -s localhost:8085/api/scan-jobs/$STRIX_JOB_ID/steps -H "$AUTH" | jq '[.[].artifacts[] | select(.fileName=="run.json")]'
+```
+
+If the step fails immediately, check `errorMessage` in the steps response
+first — the most likely cause is a missing/invalid `LLM_API_KEY`.
+
 ## Solution layout
 
 ```
@@ -195,6 +234,8 @@ src/
   StrikeShield.Orchestrator/    Docker.DotNet worker: runs playbook steps as isolated containers
 tests/
   StrikeShield.Api.Tests/       integration tests (WebApplicationFactory)
+containers/
+  strix-runner/                 Dockerfile for the strix step type (pip install strix-agent)
 docs/
   ARCHITECTURE.md               design & rationale
   PHASED_PLAN.md                phase-by-phase build + acceptance criteria

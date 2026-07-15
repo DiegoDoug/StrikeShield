@@ -19,12 +19,15 @@ namespace StrikeShield.Infrastructure.Persistence;
 /// Phase 2 additionally seeds the "nuclei-quick" Playbook (a single Nuclei
 /// step) so the Orchestrator has something to run out of the box. Phase 3
 /// adds "full-baseline" (Nuclei + ZAP + nmap) to prove cross-tool finding
-/// normalization/correlation with genuinely different native formats.
+/// normalization/correlation with genuinely different native formats. Phase
+/// 4 adds "strix-quick" (the AI pentesting agent, BYOK — see
+/// Orchestrator's StrixLlmApiKey option).
 /// </summary>
 public static class DbInitializer
 {
     public const string NucleiQuickPlaybookSlug = "nuclei-quick";
     public const string FullBaselinePlaybookSlug = "full-baseline";
+    public const string StrixQuickPlaybookSlug = "strix-quick";
 
     // Arbitrary fixed key for a Postgres session-level advisory lock. Any
     // process calling MigrateAndSeedAsync concurrently against the same
@@ -58,6 +61,7 @@ public static class DbInitializer
             await SeedOrganizationAndAdminAsync(dbContext, configuration, provider, logger);
             await SeedNucleiQuickPlaybookAsync(dbContext, logger);
             await SeedFullBaselinePlaybookAsync(dbContext, logger);
+            await SeedStrixQuickPlaybookAsync(dbContext, logger);
         }
         finally
         {
@@ -219,5 +223,50 @@ public static class DbInitializer
         await dbContext.SaveChangesAsync();
 
         logger.LogInformation("Seeded playbook '{Slug}'.", FullBaselinePlaybookSlug);
+    }
+
+    private static async Task SeedStrixQuickPlaybookAsync(StrikeShieldDbContext dbContext, ILogger logger)
+    {
+        if (await dbContext.Playbooks.AnyAsync(p => p.Slug == StrixQuickPlaybookSlug))
+        {
+            return;
+        }
+
+        var playbook = new Playbook
+        {
+            Slug = StrixQuickPlaybookSlug,
+            Name = "Strix Quick Scan",
+            Description = "Runs the Strix AI pentesting agent (docs/ARCHITECTURE.md §3) against the target in " +
+                "quick mode, budget-capped at $1.00. Requires the Orchestrator's StrixLlmApiKey to be configured " +
+                "(BYOK — see .env.example) or this step will fail immediately with an auth error from the LLM provider."
+        };
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 1,
+            ToolName = "strix",
+            // Built locally by `docker compose build` (docker-compose.yml's
+            // strix-runner service) — Docker.DotNet skips the registry pull
+            // for strikeshield/-prefixed images (see PlaybookExecutor).
+            ImageRepository = "strikeshield/strix-runner",
+            ImageTag = "latest",
+            // No {output}/{outputRelative} placeholder: Strix has no flag
+            // for its output path (always writes "./strix_runs/<run-name>/"
+            // — see PlaybookExecutor.RunStepContainerAsync, which points
+            // its cwd at our tracked per-step directory instead).
+            ArgsTemplate = "-n --target {target} --scan-mode quick --max-budget-usd 1.00",
+            // Generous timeout: this is an LLM-driven agent run (plus its
+            // own nested sandbox container spinning up), not a fixed-time
+            // scanner — "quick" mode still means several minutes at least.
+            TimeoutSeconds = 1800,
+            MemoryLimitBytes = 1024L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        dbContext.Playbooks.Add(playbook);
+        await dbContext.SaveChangesAsync();
+
+        logger.LogInformation("Seeded playbook '{Slug}'.", StrixQuickPlaybookSlug);
     }
 }

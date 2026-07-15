@@ -6,6 +6,18 @@ namespace StrikeShield.Application.Findings;
 
 public class FindingIngestionService : IFindingIngestionService
 {
+    // Tools whose native output isn't its own adapter format, but one the
+    // generic SarifFindingAdapter already covers (docs/ARCHITECTURE.md §6:
+    // "one SARIF importer covers four of our most important sources for
+    // free"). Callers always pass the real tool name (e.g. "strix") — this
+    // is purely an internal lookup detail, not something PlaybookExecutor
+    // needs to know about.
+    private static readonly IReadOnlyDictionary<string, string> AdapterFormatAliases =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["strix"] = "sarif"
+        };
+
     private readonly IAppDbContext _db;
     private readonly IReadOnlyDictionary<string, IFindingAdapter> _adaptersByToolName;
 
@@ -23,7 +35,8 @@ public class FindingIngestionService : IFindingIngestionService
         string rawContent,
         CancellationToken cancellationToken = default)
     {
-        if (!_adaptersByToolName.TryGetValue(toolName, out var adapter) || string.IsNullOrWhiteSpace(rawContent))
+        var adapterKey = AdapterFormatAliases.TryGetValue(toolName, out var aliasedKey) ? aliasedKey : toolName;
+        if (!_adaptersByToolName.TryGetValue(adapterKey, out var adapter) || string.IsNullOrWhiteSpace(rawContent))
         {
             return 0;
         }

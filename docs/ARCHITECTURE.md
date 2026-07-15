@@ -266,8 +266,11 @@ Each `ScanJob` gets:
 - A dedicated Docker network (`strikeshield-scan-<jobId>`, bridge, internal
   where possible) so parallel scans/tenants never share L2/L3 space.
 - Each `StepRun` = one container from a pinned image
-  (`nuclei:v3.x`, `owasp/zap2docker-stable`, our own `strixshield/strix-runner`
-  built from Strix's `containers/Dockerfile`, etc.), with:
+  (`nuclei:v3.x`, `ghcr.io/zaproxy/zaproxy:stable`, our own
+  `strikeshield/strix-runner` — a slim Python base with `pip install
+  strix-agent`; Strix's own `containers/Dockerfile` turned out to be the
+  Kali-based *sandbox* Strix spawns as a nested container, not something to
+  build our runner from — see `docs/PHASED_PLAN.md` Phase 4), with:
   - `--cpus`, `--memory` limits sized per tool tier
   - a per-step timeout enforced by the orchestrator (`docker stop` + record
     `TimedOut` status), independent of any timeout the tool itself has

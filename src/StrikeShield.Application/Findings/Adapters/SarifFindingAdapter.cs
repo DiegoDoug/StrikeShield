@@ -16,6 +16,11 @@ public class SarifFindingAdapter : IFindingAdapter
 {
     private static readonly Regex CwePattern = new(@"cwe-(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // Only ever used as a registration/lookup key (see
+    // FindingIngestionService's AdapterFormatAliases) — never surfaced as
+    // Finding.SourceTool, which instead comes from each run's own
+    // tool.driver.name so Strix/Semgrep/CodeQL/Trivy findings all show
+    // their real tool name despite sharing this one parser.
     public string ToolName => "sarif";
 
     public AdapterParseResult Parse(string rawContent, Guid scanJobId, Guid stepRunId, Target target)
@@ -30,6 +35,8 @@ public class SarifFindingAdapter : IFindingAdapter
 
         foreach (var run in runs.EnumerateArray())
         {
+            var sourceTool = GetDriverName(run) ?? ToolName;
+
             var rules = new Dictionary<string, JsonElement>();
             if (run.TryGetProperty("tool", out var tool)
                 && tool.TryGetProperty("driver", out var driver)
@@ -58,7 +65,7 @@ public class SarifFindingAdapter : IFindingAdapter
                 var message = GetNestedString(result, "message", "text") ?? ruleId;
                 var (location, line) = GetPrimaryLocation(result);
 
-                var severity = DetermineSeverity(result, rule);
+                var (severity, cvssScore) = DetermineSeverity(result, rule);
                 var cweIds = ExtractCweIds(rule);
 
                 var affectedAsset = line is null ? location : $"{location}:{line}";
@@ -67,12 +74,17 @@ public class SarifFindingAdapter : IFindingAdapter
                 {
                     ScanJobId = scanJobId,
                     StepRunId = stepRunId,
-                    SourceTool = ToolName,
+                    SourceTool = sourceTool,
                     Title = GetNestedString(rule, "shortDescription", "text") ?? ruleId,
                     Description = message,
                     Severity = severity,
+                    CvssScore = cvssScore,
                     CweIds = cweIds,
                     AffectedAsset = affectedAsset,
+                    // Best-effort: SARIF's "properties" bag is tool-defined,
+                    // not standardized, so this degrades to null rather than
+                    // failing when a tool uses a different key.
+                    PocCode = GetResultProperty(result, "poc") ?? GetResultProperty(result, "proofOfConcept") ?? GetResultProperty(result, "pocCode"),
                     DedupeFingerprint = FindingFingerprint.Compute(
                         target.Value,
                         cweIds.FirstOrDefault() ?? ruleId,
@@ -84,7 +96,17 @@ public class SarifFindingAdapter : IFindingAdapter
         return new AdapterParseResult(findings, Array.Empty<Asset>());
     }
 
-    private static FindingSeverity DetermineSeverity(JsonElement result, JsonElement rule)
+    private static string? GetDriverName(JsonElement run) =>
+        run.TryGetProperty("tool", out var tool) && tool.TryGetProperty("driver", out var driver)
+            ? GetString(driver, "name")?.ToLowerInvariant()
+            : null;
+
+    private static string? GetResultProperty(JsonElement result, string propertyName) =>
+        result.ValueKind == JsonValueKind.Object && result.TryGetProperty("properties", out var props)
+            ? GetString(props, propertyName)
+            : null;
+
+    private static (FindingSeverity Severity, double? CvssScore) DetermineSeverity(JsonElement result, JsonElement rule)
     {
         if (rule.ValueKind == JsonValueKind.Object
             && rule.TryGetProperty("properties", out var props)
@@ -92,7 +114,7 @@ public class SarifFindingAdapter : IFindingAdapter
             && scoreEl.ValueKind == JsonValueKind.String
             && double.TryParse(scoreEl.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var score))
         {
-            return score switch
+            var severity = score switch
             {
                 >= 9.0 => FindingSeverity.Critical,
                 >= 7.0 => FindingSeverity.High,
@@ -100,15 +122,17 @@ public class SarifFindingAdapter : IFindingAdapter
                 > 0.0 => FindingSeverity.Low,
                 _ => FindingSeverity.Info
             };
+            return (severity, score);
         }
 
-        return GetString(result, "level") switch
+        var levelSeverity = GetString(result, "level") switch
         {
             "error" => FindingSeverity.High,
             "warning" => FindingSeverity.Medium,
             "note" => FindingSeverity.Low,
             _ => FindingSeverity.Info
         };
+        return (levelSeverity, null);
     }
 
     private static List<string> ExtractCweIds(JsonElement rule)

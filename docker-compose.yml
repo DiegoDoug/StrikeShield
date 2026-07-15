@@ -77,10 +77,28 @@ services:
     networks:
       - strikeshield-net
 
+  # Builds the strix-runner image so it's available locally for the
+  # Orchestrator to reference (docs/PHASED_PLAN.md Phase 4) — Docker.DotNet
+  # only pulls from a registry, so a purely-local custom image has to be
+  # built by compose, not pulled at scan time like nuclei/zap/nmap. This
+  # service never needs to actually run; it exists solely so
+  # `docker compose up --build` builds and tags the image.
+  strix-runner:
+    build:
+      context: .
+      dockerfile: containers/strix-runner/Dockerfile
+    image: strikeshield/strix-runner:latest
+    entrypoint: ["true"]
+    networks:
+      - strikeshield-net
+
   # Docker-outside-of-Docker: mounts the host's Docker socket so it can
   # launch one isolated container per playbook step (docs/ARCHITECTURE.md
   # §5). Deliberately the ONLY service with that mount — never add it to
-  # the public-facing api service (docs/ARCHITECTURE.md §8).
+  # the public-facing api service (docs/ARCHITECTURE.md §8). The strix step
+  # type is a narrow, documented exception to "isolated" (see
+  # PlaybookExecutor): Strix's own runtime needs Docker access too, since it
+  # spawns its own sandbox container for dynamic testing.
   orchestrator:
     build:
       context: .
@@ -92,6 +110,13 @@ services:
       Orchestrator__NetworkName: strikeshield-net
       Orchestrator__ScanOutputVolumeName: strikeshield-scan-output
       Orchestrator__ScanOutputMountPath: /scan-output
+      # BYOK for Strix (docs/ARCHITECTURE.md §3) — simplified to instance-
+      # wide config for this phase rather than a full per-organization
+      # encrypted secret vault, which is Phase 10 scope ("Secrets in a real
+      # vault"). Unset by default; the strix step type simply has nothing
+      # to run against without it, same as any other BYOK integration.
+      Orchestrator__StrixLlmModel: "${STRIKESHIELD_STRIX_LLM_MODEL:-anthropic/claude-sonnet-4-6}"
+      Orchestrator__StrixLlmApiKey: "${STRIKESHIELD_STRIX_LLM_API_KEY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - strikeshield-scan-output:/scan-output

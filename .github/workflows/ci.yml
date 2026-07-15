@@ -201,6 +201,23 @@ jobs:
           fi
           echo "Found $FINDING_COUNT normalized finding(s) — the cross-tool ingestion pipeline is live and working."
 
+          # Phase 4 (Strix): deliberately NOT launched here. It needs a
+          # real, paid LLM API key (BYOK, docs/PHASED_PLAN.md Phase 4) which
+          # CI doesn't have and shouldn't be spending on every push anyway.
+          # What CI *can* verify without one: the strix-runner image builds
+          # (already proven by "docker compose up --build" above — that
+          # service would have failed this whole job otherwise) and the
+          # seeded playbook is well-formed and reachable via the API.
+          echo "Confirming the strix-quick playbook seeded correctly..."
+          STRIX_PLAYBOOK=$(curl -sf "$BASE_URL/api/playbooks" -H "$AUTH" | jq -e '[.[] | select(.slug=="strix-quick")][0]')
+          echo "$STRIX_PLAYBOOK" | jq .
+          STRIX_STEP_TOOL=$(echo "$STRIX_PLAYBOOK" | jq -r '.steps[0].toolName')
+          if [ "$STRIX_STEP_TOOL" != "strix" ]; then
+            echo "Expected strix-quick's first step toolName to be 'strix', got '$STRIX_STEP_TOOL'."
+            exit 1
+          fi
+          echo "strix-quick playbook confirmed seeded — launch it yourself with a real LLM_API_KEY to exercise Strix end-to-end (see README.md)."
+
       - name: Verify no leaked step containers
         if: always()
         run: |

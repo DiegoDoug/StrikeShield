@@ -65,7 +65,7 @@ jobs:
       - name: Wait for API to report healthy
         run: |
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:8080/health | grep -q '"status":"Healthy"'; then
+            if curl -sf http://localhost:8085/health | grep -q '"status":"Healthy"'; then
               echo "API is healthy."
               exit 0
             fi
@@ -84,7 +84,7 @@ jobs:
           # it as an artifact below so a failure is diagnosable without
           # wading through that noise in `docker compose logs`.
           exec > >(tee /tmp/acceptance-flow.log) 2>&1
-          BASE_URL=http://localhost:8080
+          BASE_URL=http://localhost:8085
 
           TOKEN=$(curl -sf -X POST "$BASE_URL/api/auth/login" \
             -H 'Content-Type: application/json' \

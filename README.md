@@ -60,7 +60,7 @@ docker compose up --build
 Then:
 
 ```bash
-curl -s http://localhost:8080/health | jq
+curl -s http://localhost:8085/health | jq
 # {
 #   "status": "Healthy",
 #   "checks": [{ "name": "postgres", "status": "Healthy", "description": "Postgres connection succeeded." }],
@@ -68,17 +68,17 @@ curl -s http://localhost:8080/health | jq
 # }
 ```
 
-Swagger UI: http://localhost:8080/swagger
+Swagger UI: http://localhost:8085/swagger
 
 > **Port already in use?** If `docker compose up` fails with
-> `Bind for 0.0.0.0:8080 failed: port is already allocated` (or the same for
+> `Bind for 0.0.0.0:8085 failed: port is already allocated` (or the same for
 > 5432/6379), something else on your machine already has that port —
 > another project, a local Postgres/Redis install, or (on Windows) IIS
 > Express or a leftover container from a previous run. Either stop
 > whatever's holding it, or remap it: copy `.env.example` to `.env` and set
 > `STRIKESHIELD_API_PORT` / `STRIKESHIELD_POSTGRES_PORT` /
 > `STRIKESHIELD_REDIS_PORT` to a free port, then re-run
-> `docker compose up --build` (adjust the `localhost:8080` URLs above to
+> `docker compose up --build` (adjust the `localhost:8085` URLs above to
 > match). `docker ps -a` will show if a stray container from an earlier
 > attempt is still holding the port.
 
@@ -98,35 +98,35 @@ On first boot the API seeds one organization and one admin user
 
 ```bash
 # 1. Log in and grab a token
-TOKEN=$(curl -s -X POST localhost:8080/api/auth/login \
+TOKEN=$(curl -s -X POST localhost:8085/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@strikeshield.local","password":"ChangeMe123!"}' | jq -r .token)
 AUTH="Authorization: Bearer $TOKEN"
 
 # 2. Get the seeded organization id
-ORG_ID=$(curl -s localhost:8080/api/organizations -H "$AUTH" | jq -r '.[0].id')
+ORG_ID=$(curl -s localhost:8085/api/organizations -H "$AUTH" | jq -r '.[0].id')
 
 # 3. Client -> Project -> Target -> Engagement (unapproved)
-CLIENT_ID=$(curl -s -X POST localhost:8080/api/clients -H "$AUTH" -H 'Content-Type: application/json' \
+CLIENT_ID=$(curl -s -X POST localhost:8085/api/clients -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"organizationId\":\"$ORG_ID\",\"name\":\"Acme Corp\"}" | jq -r .id)
-PROJECT_ID=$(curl -s -X POST localhost:8080/api/projects -H "$AUTH" -H 'Content-Type: application/json' \
+PROJECT_ID=$(curl -s -X POST localhost:8085/api/projects -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"clientId\":\"$CLIENT_ID\",\"name\":\"Q3 External Pentest\"}" | jq -r .id)
-TARGET_ID=$(curl -s -X POST localhost:8080/api/targets -H "$AUTH" -H 'Content-Type: application/json' \
+TARGET_ID=$(curl -s -X POST localhost:8085/api/targets -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"http://juice-shop:3000\"}" | jq -r .id)
-ENGAGEMENT_ID=$(curl -s -X POST localhost:8080/api/engagements -H "$AUTH" -H 'Content-Type: application/json' \
+ENGAGEMENT_ID=$(curl -s -X POST localhost:8085/api/engagements -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"projectId\":\"$PROJECT_ID\",\"name\":\"July Engagement\",\"scopeStart\":\"2026-01-01T00:00:00Z\",\"scopeEnd\":\"2027-01-01T00:00:00Z\"}" | jq -r .id)
 
 # 4. Scan-job request against the unapproved engagement -> expect 403
-curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
 # -> 403
 
 # 5. Approve the engagement
-curl -s -X POST "localhost:8080/api/engagements/$ENGAGEMENT_ID/approve" -H "$AUTH" -H 'Content-Type: application/json' \
+curl -s -X POST "localhost:8085/api/engagements/$ENGAGEMENT_ID/approve" -H "$AUTH" -H 'Content-Type: application/json' \
   -d '{"approvedBy":"qa-lead@strikeshield.local"}'
 
 # 6. Same scan-job request again -> expect 202
-curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
 # -> 202
 ```
@@ -141,16 +141,16 @@ pointed at `http://juice-shop:3000`, engagement approved):
 
 ```bash
 # 1. Launch the seeded nuclei-quick playbook
-SCAN_JOB_ID=$(curl -s -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+SCAN_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}" | jq -r .id)
 
 # 2. Poll until Completed — the Orchestrator picks it up within ~5s and
 #    Nuclei's first run also fetches its template set, so this can take a
 #    couple of minutes the very first time.
-watch -n 5 "curl -s localhost:8080/api/scan-jobs/$SCAN_JOB_ID -H \"$AUTH\" | jq .status"
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$SCAN_JOB_ID -H \"$AUTH\" | jq .status"
 
 # 3. Raw Nuclei output (JSON-lines), once Completed
-curl -s localhost:8080/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH" | jq .
+curl -s localhost:8085/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH" | jq .
 
 # 4. Confirm no leftover step containers
 docker ps -a --filter "name=strikeshield-step"
@@ -169,14 +169,14 @@ Continuing with the same `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID`:
 
 ```bash
 # 1. Launch the seeded full-baseline playbook (Nuclei + ZAP baseline + nmap)
-BASELINE_JOB_ID=$(curl -s -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+BASELINE_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-baseline\"}" | jq -r .id)
 
 # 2. Poll until Completed — ZAP's baseline scan is the slow step (up to 900s)
-watch -n 5 "curl -s localhost:8080/api/scan-jobs/$BASELINE_JOB_ID -H \"$AUTH\" | jq .status"
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$BASELINE_JOB_ID -H \"$AUTH\" | jq .status"
 
 # 3. Normalized findings, one shape regardless of source tool
-curl -s localhost:8080/api/scan-jobs/$BASELINE_JOB_ID/findings -H "$AUTH" | jq '[.[] | {sourceTool, title, severity, cweIds}]'
+curl -s localhost:8085/api/scan-jobs/$BASELINE_JOB_ID/findings -H "$AUTH" | jq '[.[] | {sourceTool, title, severity, cweIds}]'
 ```
 
 Cross-tool correlation (grouping the same underlying issue found by two

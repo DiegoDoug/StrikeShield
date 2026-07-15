@@ -55,11 +55,11 @@ services:
       # DbInitializer.MigrateAndSeedAsync completes (it runs before
       # app.Run()), so proving the port is listening is enough to prove
       # migrations are done. No curl/wget/bash guaranteed in the aspnet
-      # base image, so check for a LISTEN socket on port 8080 (0x1F90)
+      # base image, so check for a LISTEN socket on port 8085 (0x1F95)
       # directly via /proc/net/tcp{,6} — needs only grep. Must check both:
-      # ASPNETCORE_URLS="http://+:8080" makes Kestrel bind the IPv6
+      # ASPNETCORE_URLS="http://+:8085" makes Kestrel bind the IPv6
       # wildcard ([::]), so the listening socket only shows up in tcp6.
-      test: ["CMD-SHELL", "grep -q ':1F90' /proc/net/tcp /proc/net/tcp6"]
+      test: ["CMD-SHELL", "grep -q ':1F95' /proc/net/tcp /proc/net/tcp6"]
       interval: 5s
       timeout: 5s
       retries: 20

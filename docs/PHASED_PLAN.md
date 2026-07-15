@@ -35,7 +35,7 @@ Compose + CI) works end to end before any business logic exists.
 ```bash
 git pull origin claude/pentesting-orchestration-platform-0xzgjs
 docker compose up --build
-curl -s http://localhost:8080/health | jq
+curl -s http://localhost:8085/health | jq
 # expect: {"status":"Healthy", "checks":[{"name":"postgres","status":"Healthy"}]}
 ```
 **Acceptance:** container stack comes up clean, `/health` returns `Healthy`,
@@ -116,12 +116,12 @@ docker compose up --build
 # 1. Log in, create client -> project -> target (juice-shop) -> engagement,
 #    approve it (see README.md Phase 1 walkthrough for the exact curl calls).
 # 2. Launch the seeded playbook against the target:
-curl -X POST localhost:8080/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+curl -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
   -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
 # 3. Poll until Completed (the Orchestrator picks it up within ~5s):
-curl localhost:8080/api/scan-jobs/$SCAN_JOB_ID -H "$AUTH"
+curl localhost:8085/api/scan-jobs/$SCAN_JOB_ID -H "$AUTH"
 # 4. Raw Nuclei output, once Completed:
-curl localhost:8080/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH"
+curl localhost:8085/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH"
 # 5. No leaked containers:
 docker ps -a --filter "name=strikeshield-step"   # expect: empty
 ```
@@ -152,7 +152,7 @@ promise with tools that have genuinely different native formats.
 ```bash
 docker compose up --build
 # run playbook "nuclei+zap+nmap" against juice-shop
-curl localhost:8080/api/scan-jobs/{id}/findings | jq 'length, .[0]'
+curl localhost:8085/api/scan-jobs/{id}/findings | jq 'length, .[0]'
 ```
 **Acceptance:** findings from all 3 tools appear in one `Finding` table with
 populated `severity`/`cweIds` where the source tool provides them; a finding
@@ -182,7 +182,7 @@ overlapping sample output, not by relying on live-scan nondeterminism).
 export LLM_API_KEY=... # your own key
 docker compose up --build
 # run playbook "strix-quick" against juice-shop with max_budget_usd=1.00
-curl localhost:8080/api/scan-jobs/{id}/findings | jq '[.[] | select(.sourceTool=="strix")]'
+curl localhost:8085/api/scan-jobs/{id}/findings | jq '[.[] | select(.sourceTool=="strix")]'
 ```
 **Acceptance:** Strix findings appear with `cvssScore`, `cweIds`, and PoC
 populated; the run stops at/under the configured budget (visible in
@@ -210,8 +210,8 @@ multiple tools" promise, not just "run tools in parallel."
 ```bash
 docker compose up --build
 # run "full-external-recon" against a scoped local multi-subdomain test target
-curl localhost:8080/api/scan-jobs/{id}/steps   # expect ordered step graph w/ per-step status
-curl localhost:8080/api/scan-jobs/{id}/assets  # expect subdomains/urls discovered by early steps
+curl localhost:8085/api/scan-jobs/{id}/steps   # expect ordered step graph w/ per-step status
+curl localhost:8085/api/scan-jobs/{id}/assets  # expect subdomains/urls discovered by early steps
 ```
 **Acceptance:** step graph executes in dependency order (visible via
 step-run timestamps), and at least one downstream step's actual container
@@ -241,7 +241,7 @@ docker compose up --build
 # seed a fixture set of 3 overlapping findings from different tools
 dotnet test --filter Correlator
 # run a recon-only playbook against juice-shop, expect a pending amendment
-curl localhost:8080/api/scan-jobs/{id}/amendments
+curl localhost:8085/api/scan-jobs/{id}/amendments
 ```
 **Acceptance:** fixture test shows overlapping findings collapse to one
 `CorrelationGroup` with combined evidence; a live recon run produces a
@@ -266,10 +266,10 @@ the playbook.
 **Test it:**
 ```bash
 docker compose up --build
-curl localhost:8080/api/engagements/{id}/reports/executive -o exec.pdf
-curl localhost:8080/api/engagements/{id}/reports/technical -o tech.pdf
-curl localhost:8080/api/engagements/{id}/reports/dev-remediation -o dev.pdf
-curl localhost:8080/api/engagements/{id}/reports/compliance -o compliance.pdf
+curl localhost:8085/api/engagements/{id}/reports/executive -o exec.pdf
+curl localhost:8085/api/engagements/{id}/reports/technical -o tech.pdf
+curl localhost:8085/api/engagements/{id}/reports/dev-remediation -o dev.pdf
+curl localhost:8085/api/engagements/{id}/reports/compliance -o compliance.pdf
 ```
 **Acceptance:** all 4 PDFs generate from one completed engagement; an
 automated schema-validation test asserts every finding in the technical

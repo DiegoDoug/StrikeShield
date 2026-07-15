@@ -32,6 +32,10 @@ public static class DependencyInjection
         services.AddScoped<IFindingAdapter, SarifFindingAdapter>();
         services.AddScoped<IFindingAdapter, ZapFindingAdapter>();
         services.AddScoped<IFindingAdapter, NmapFindingAdapter>();
+        services.AddScoped<IFindingAdapter, SubdomainReconFindingAdapter>();
+        services.AddScoped<IFindingAdapter, KatanaFindingAdapter>();
+        services.AddScoped<IFindingAdapter, FfufFindingAdapter>();
+        services.AddScoped<IFindingAdapter, NiktoFindingAdapter>();
         services.AddScoped<IFindingIngestionService, FindingIngestionService>();
         services.AddScoped<ICorrelator, Correlator>();
         services.AddScoped<IFindingService, FindingService>();

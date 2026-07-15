@@ -1,5 +1,6 @@
 using Docker.DotNet;
 using Docker.DotNet.Models;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StrikeShield.Application.Findings;
@@ -57,23 +58,60 @@ public class PlaybookExecutor : IPlaybookExecutor
         var target = scanJob.Target
             ?? throw new InvalidOperationException($"ScanJob {scanJob.Id} has no loaded Target.");
 
-        var overallSuccess = true;
+        var orderedSteps = PlaybookDagPlanner.TopologicalOrder(playbook.Steps.ToList());
+        var stepRunsByStepKey = new Dictionary<string, StepRun>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var step in playbook.Steps.OrderBy(s => s.Order))
+        // Unlike Phase 2-4's single linear chain, a DAG's branches are
+        // independent: an unrelated step failing shouldn't stop a step
+        // with no dependency on it. Only a step's own DependsOn (evaluated
+        // per-step below via Condition) skips it; the ScanJob as a whole
+        // is Failed if *any* step that actually ran ended up Failed/TimedOut.
+        var anyStepFailed = false;
+
+        foreach (var step in orderedSteps)
         {
+            var dependencyStepRuns = step.DependsOn
+                .Select(depKey => stepRunsByStepKey.TryGetValue(depKey, out var sr) ? sr : null)
+                .Where(sr => sr is not null)
+                .Select(sr => sr!)
+                .ToList();
+
+            var shouldSkip = step.Condition == StepCondition.OnSuccess
+                && dependencyStepRuns.Any(sr => sr.Status != StepRunStatus.Completed);
+
             var stepRun = new StepRun
             {
                 ScanJobId = scanJob.Id,
                 PlaybookStepId = step.Id,
-                Status = StepRunStatus.Running,
-                StartedAt = DateTimeOffset.UtcNow
+                Status = shouldSkip ? StepRunStatus.Skipped : StepRunStatus.Running,
+                StartedAt = shouldSkip ? null : DateTimeOffset.UtcNow
             };
             _dbContext.StepRuns.Add(stepRun);
             await _dbContext.SaveChangesAsync(cancellationToken);
+            stepRunsByStepKey[step.StepKey] = stepRun;
+
+            if (shouldSkip)
+            {
+                stepRun.CompletedAt = DateTimeOffset.UtcNow;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                continue;
+            }
 
             try
             {
-                var result = await RunStepContainerAsync(step, target, scanJob.Id, stepRun.Id, cancellationToken);
+                // Step N+1 consumes step N's discovered Assets as its own
+                // target/wordlist input via "{assetsFile}" tokens in its
+                // ArgsTemplate (docs/PHASED_PLAN.md Phase 5) — e.g.
+                // subfinder's subdomains become nmap's host list, katana's
+                // URLs become nuclei's/ffuf's input list.
+                var dependencyStepRunIds = dependencyStepRuns.Select(sr => sr.Id).ToList();
+                var upstreamAssets = dependencyStepRunIds.Count > 0
+                    ? await _dbContext.Assets
+                        .Where(a => a.DiscoveredByStepRunId != null && dependencyStepRunIds.Contains(a.DiscoveredByStepRunId!.Value))
+                        .ToListAsync(cancellationToken)
+                    : new List<Asset>();
+
+                var result = await RunStepContainerAsync(step, target, scanJob.Id, stepRun.Id, upstreamAssets, cancellationToken);
 
                 stepRun.ExitCode = result.ExitCode;
                 stepRun.ContainerId = result.ContainerId;
@@ -142,7 +180,7 @@ public class PlaybookExecutor : IPlaybookExecutor
 
                 if (stepRun.Status != StepRunStatus.Completed)
                 {
-                    overallSuccess = false;
+                    anyStepFailed = true;
                 }
             }
             catch (Exception ex)
@@ -151,22 +189,17 @@ public class PlaybookExecutor : IPlaybookExecutor
                 stepRun.Status = StepRunStatus.Failed;
                 stepRun.CompletedAt = DateTimeOffset.UtcNow;
                 stepRun.ErrorMessage = ex.Message;
-                overallSuccess = false;
+                anyStepFailed = true;
             }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
-
-            if (!overallSuccess)
-            {
-                break;
-            }
         }
 
         // Correlate whatever Findings were ingested even on partial failure
         // — an earlier completed step's findings are still worth deduping.
         await _correlator.CorrelateAsync(scanJob.Id, cancellationToken);
 
-        scanJob.Status = overallSuccess ? ScanJobStatus.Completed : ScanJobStatus.Failed;
+        scanJob.Status = anyStepFailed ? ScanJobStatus.Failed : ScanJobStatus.Completed;
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -175,6 +208,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         Target target,
         Guid scanJobId,
         Guid stepRunId,
+        IReadOnlyList<Asset> upstreamAssets,
         CancellationToken cancellationToken)
     {
         var outputFileName = OutputFileNameFor(step.ToolName);
@@ -201,20 +235,17 @@ public class PlaybookExecutor : IPlaybookExecutor
                 | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
         }
 
-        var args = step.ArgsTemplate
-            .Replace("{target}", target.Value)
-            .Replace("{targetHost}", ExtractHost(target.Value))
-            .Replace("{output}", containerOutputPath)
-            // A path relative to the shared volume's root — for tools
-            // (zap) whose own report writer joins the path it's given
-            // against its own working directory rather than honoring an
-            // absolute path, so {output} silently lands somewhere we
-            // never look. Resolves to the same file as {output} as long
-            // as the tool's container also mounts the shared volume at
-            // its own working directory (see the zap-specific mount below).
-            .Replace("{outputRelative}", relativeOutputPath)
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .ToList();
+        // "{outputRelative}" (used by zap): a path relative to the shared
+        // volume's root — its own report writer joins the path it's given
+        // against its own working directory rather than honoring an
+        // absolute path, so "{output}" alone would silently land somewhere
+        // we never look. Resolves to the same file as "{output}" as long as
+        // the tool's container also mounts the shared volume at its own
+        // working directory (see the zap-specific mount below).
+        // "{assetsFile}"/"{assetsFile:<AssetType>}": this step's upstream
+        // dependencies' discovered Assets, written to a file in this same
+        // shared volume (docs/PHASED_PLAN.md Phase 5) — see StepArgsBuilder.
+        var args = StepArgsBuilder.Build(step, target, outputDir, containerOutputPath, relativeOutputPath, upstreamAssets);
 
         var mounts = new List<Mount>
         {
@@ -438,16 +469,11 @@ public class PlaybookExecutor : IPlaybookExecutor
         "nuclei" => "output.jsonl",
         "zap" => "output.json",
         "nmap" => "output.xml",
+        "katana" => "output.jsonl",
+        "ffuf" => "output.json",
+        "nikto" => "output.json",
         _ => "output.txt"
     };
-
-    /// <summary>
-    /// nmap (and similar host-oriented tools) need a bare host/IP, not a
-    /// full URL with scheme/port — extracts one from a Target.Value that
-    /// may be either (e.g. "http://juice-shop:3000" or "juice-shop").
-    /// </summary>
-    private static string ExtractHost(string targetValue) =>
-        Uri.TryCreate(targetValue, UriKind.Absolute, out var uri) ? uri.Host : targetValue;
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];

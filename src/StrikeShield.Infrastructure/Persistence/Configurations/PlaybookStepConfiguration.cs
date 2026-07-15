@@ -27,6 +27,17 @@ public class PlaybookStepConfiguration : IEntityTypeConfiguration<PlaybookStep>
             .IsRequired()
             .HasMaxLength(100);
 
+        builder.Property(s => s.StepKey)
+            .IsRequired()
+            .HasMaxLength(100);
+
+        builder.Property(s => s.DependsOn)
+            .IsRequired()
+            .HasColumnType("text[]");
+
+        builder.Property(s => s.Condition)
+            .IsRequired();
+
         builder.Property(s => s.ArgsTemplate)
             .IsRequired()
             .HasMaxLength(2000);
@@ -42,6 +53,9 @@ public class PlaybookStepConfiguration : IEntityTypeConfiguration<PlaybookStep>
 
         builder.Property(s => s.CreatedAt)
             .IsRequired();
+
+        builder.HasIndex(s => new { s.PlaybookId, s.StepKey })
+            .IsUnique();
 
         builder.HasMany(s => s.StepRuns)
             .WithOne(sr => sr.PlaybookStep)

@@ -34,5 +34,10 @@ public static class ScanJobsEndpoints
         // see docs/PHASED_PLAN.md Phase 3 acceptance criteria.
         group.MapGet("/{id:guid}/findings", async (Guid id, IFindingService service, CancellationToken ct) =>
             Results.Ok(await service.GetForScanJobAsync(id, ct)));
+
+        // Everything a recon step discovered (subdomains/URLs/hosts/ports) —
+        // see docs/PHASED_PLAN.md Phase 5 acceptance criteria.
+        group.MapGet("/{id:guid}/assets", async (Guid id, IScanJobService service, CancellationToken ct) =>
+            Results.Ok(await service.GetAssetsAsync(id, ct)));
     }
 }

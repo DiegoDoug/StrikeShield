@@ -21,13 +21,16 @@ namespace StrikeShield.Infrastructure.Persistence;
 /// adds "full-baseline" (Nuclei + ZAP + nmap) to prove cross-tool finding
 /// normalization/correlation with genuinely different native formats. Phase
 /// 4 adds "strix-quick" (the AI pentesting agent, BYOK — see
-/// Orchestrator's StrixLlmApiKey option).
+/// Orchestrator's StrixLlmApiKey option). Phase 5 adds
+/// "full-external-recon", a multi-tool DAG proving recon output (Assets)
+/// feeds downstream steps' args — see PlaybookDagPlanner/StepArgsBuilder.
 /// </summary>
 public static class DbInitializer
 {
     public const string NucleiQuickPlaybookSlug = "nuclei-quick";
     public const string FullBaselinePlaybookSlug = "full-baseline";
     public const string StrixQuickPlaybookSlug = "strix-quick";
+    public const string FullExternalReconPlaybookSlug = "full-external-recon";
 
     // Arbitrary fixed key for a Postgres session-level advisory lock. Any
     // process calling MigrateAndSeedAsync concurrently against the same
@@ -62,6 +65,7 @@ public static class DbInitializer
             await SeedNucleiQuickPlaybookAsync(dbContext, logger);
             await SeedFullBaselinePlaybookAsync(dbContext, logger);
             await SeedStrixQuickPlaybookAsync(dbContext, logger);
+            await SeedFullExternalReconPlaybookAsync(dbContext, logger);
         }
         finally
         {
@@ -137,6 +141,7 @@ public static class DbInitializer
         {
             PlaybookId = playbook.Id,
             Order = 1,
+            StepKey = "nuclei",
             ToolName = "nuclei",
             ImageRepository = "projectdiscovery/nuclei",
             ImageTag = "latest",
@@ -177,6 +182,7 @@ public static class DbInitializer
         {
             PlaybookId = playbook.Id,
             Order = 1,
+            StepKey = "nuclei",
             ToolName = "nuclei",
             ImageRepository = "projectdiscovery/nuclei",
             ImageTag = "latest",
@@ -190,6 +196,7 @@ public static class DbInitializer
         {
             PlaybookId = playbook.Id,
             Order = 2,
+            StepKey = "zap",
             ToolName = "zap",
             ImageRepository = "ghcr.io/zaproxy/zaproxy",
             ImageTag = "stable",
@@ -209,6 +216,7 @@ public static class DbInitializer
         {
             PlaybookId = playbook.Id,
             Order = 3,
+            StepKey = "nmap",
             ToolName = "nmap",
             ImageRepository = "instrumentisto/nmap",
             ImageTag = "latest",
@@ -245,6 +253,7 @@ public static class DbInitializer
         {
             PlaybookId = playbook.Id,
             Order = 1,
+            StepKey = "strix",
             ToolName = "strix",
             // Built locally by `docker compose build` (docker-compose.yml's
             // strix-runner service) — Docker.DotNet skips the registry pull
@@ -268,5 +277,133 @@ public static class DbInitializer
         await dbContext.SaveChangesAsync();
 
         logger.LogInformation("Seeded playbook '{Slug}'.", StrixQuickPlaybookSlug);
+    }
+
+    /// <summary>
+    /// Phase 5's DAG + asset hand-off showcase (docs/PHASED_PLAN.md): two
+    /// independent recon steps (subfinder/katana) feed three downstream
+    /// steps via "{assetsFile:&lt;AssetType&gt;}" — subfinder's discovered
+    /// subdomains become nmap's host list, katana's discovered URLs become
+    /// ffuf's/nuclei's input list. nikto runs standalone, same as
+    /// full-baseline's steps. Best exercised against a real, authorized,
+    /// multi-subdomain target — subfinder/katana won't discover anything
+    /// interesting about an internal-only compose hostname like
+    /// "juice-shop" that has no public DNS footprint.
+    /// </summary>
+    private static async Task SeedFullExternalReconPlaybookAsync(StrikeShieldDbContext dbContext, ILogger logger)
+    {
+        if (await dbContext.Playbooks.AnyAsync(p => p.Slug == FullExternalReconPlaybookSlug))
+        {
+            return;
+        }
+
+        var playbook = new Playbook
+        {
+            Slug = FullExternalReconPlaybookSlug,
+            Name = "Full External Recon + Scan",
+            Description = "Subfinder + Katana recon feeds nmap/ffuf/nuclei as a DAG (docs/PHASED_PLAN.md Phase 5): " +
+                "subfinder's subdomains become nmap's target list, katana's crawled URLs become ffuf's and nuclei's " +
+                "input list. Nikto runs standalone. Point this at a real, authorized, multi-subdomain domain — " +
+                "subfinder/katana have nothing to find against an internal-only compose hostname."
+        };
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 1,
+            StepKey = "subfinder",
+            ToolName = "subfinder",
+            ImageRepository = "projectdiscovery/subfinder",
+            ImageTag = "latest",
+            ArgsTemplate = "-d {targetHost} -silent -o {output}",
+            TimeoutSeconds = 300,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 2,
+            StepKey = "katana",
+            ToolName = "katana",
+            ImageRepository = "projectdiscovery/katana",
+            ImageTag = "latest",
+            ArgsTemplate = "-u {target} -jsonl -silent -o {output}",
+            TimeoutSeconds = 300,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 3,
+            StepKey = "nmap-recon",
+            ToolName = "nmap",
+            ImageRepository = "instrumentisto/nmap",
+            ImageTag = "latest",
+            DependsOn = new List<string> { "subfinder" },
+            // {assetsFile:Subdomain}: nmap's -iL host list, built from
+            // subfinder's discovered Subdomain Assets rather than a single
+            // hardcoded {targetHost} (see StepArgsBuilder).
+            ArgsTemplate = "-oX {output} -T4 --script vuln -iL {assetsFile:Subdomain}",
+            TimeoutSeconds = 900,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 4,
+            StepKey = "ffuf",
+            ToolName = "ffuf",
+            ImageRepository = "ffuf/ffuf",
+            ImageTag = "latest",
+            DependsOn = new List<string> { "katana" },
+            // {assetsFile:Url}: ffuf's wordlist, seeded from katana's
+            // discovered URLs instead of a static wordlist file.
+            ArgsTemplate = "-u {target}/FUZZ -w {assetsFile:Url} -of json -o {output}",
+            TimeoutSeconds = 600,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 5,
+            StepKey = "nuclei-targeted",
+            ToolName = "nuclei",
+            ImageRepository = "projectdiscovery/nuclei",
+            ImageTag = "latest",
+            DependsOn = new List<string> { "katana" },
+            // {assetsFile:Url}: nuclei's -l input list, built from katana's
+            // discovered URLs instead of a single {target}.
+            ArgsTemplate = "-l {assetsFile:Url} -jsonl -o {output} -severity critical,high,medium",
+            TimeoutSeconds = 600,
+            MemoryLimitBytes = 1024L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        playbook.Steps.Add(new PlaybookStep
+        {
+            PlaybookId = playbook.Id,
+            Order = 6,
+            StepKey = "nikto",
+            ToolName = "nikto",
+            ImageRepository = "securecodebox/nikto",
+            ImageTag = "latest",
+            ArgsTemplate = "-h {target} -Format json -o {output}",
+            TimeoutSeconds = 600,
+            MemoryLimitBytes = 512L * 1024 * 1024,
+            NanoCpus = 1_000_000_000L
+        });
+
+        dbContext.Playbooks.Add(playbook);
+        await dbContext.SaveChangesAsync();
+
+        logger.LogInformation("Seeded playbook '{Slug}'.", FullExternalReconPlaybookSlug);
     }
 }

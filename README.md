@@ -20,7 +20,23 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 4: Strix, the AI pentesting engine, is wired in.** `strikeshield/strix-runner`
+**Phase 5: multi-tool DAG playbooks + asset hand-off.** `PlaybookStep` now
+carries a `StepKey`/`DependsOn[]`/`Condition`, and the Orchestrator's new
+`PlaybookDagPlanner` topologically sorts a playbook's steps instead of just
+running them in `Order` — every Phase 2-4 playbook still runs in the same
+order since none of them declare a dependency. New recon adapters
+(Subfinder/Amass → subdomain `Asset`, Katana → URL `Asset`) plus `ffuf` and
+`nikto` as step types. The actual hand-off: a step's `ArgsTemplate` can use
+`"{assetsFile}"`/`"{assetsFile:<AssetType>}"`, expanded by the new
+`StepArgsBuilder` into a path to a file of its dependencies' discovered
+`Asset` values in the same shared scan-output volume `"{output}"` already
+uses — see the seeded `full-external-recon` playbook, where subfinder's
+subdomains become nmap's `-iL` host list and katana's URLs become
+ffuf's/nuclei's input list. `GET /api/scan-jobs/{id}/assets` surfaces
+everything discovered. See `tests/StrikeShield.Api.Tests/PlaybookDagPlannerTests.cs`
+and `StepArgsBuilderTests.cs` for the ordering/hand-off proof.
+
+**Phase 4** (still active): Strix, the AI pentesting engine, is wired in. `strikeshield/strix-runner`
 (a slim Python base with `pip install strix-agent`, built locally by
 `docker compose build`) runs as a new `strix` playbook step type — BYOK via
 `STRIKESHIELD_STRIX_LLM_API_KEY` (see `.env.example`). Strix's findings
@@ -222,6 +238,36 @@ curl -s localhost:8085/api/scan-jobs/$STRIX_JOB_ID/steps -H "$AUTH" | jq '[.[].a
 
 If the step fails immediately, check `errorMessage` in the steps response
 first — the most likely cause is a missing/invalid `LLM_API_KEY`.
+
+### Phase 5 walkthrough (DAG playbooks + asset hand-off, via curl)
+
+`full-external-recon` (subfinder + katana feeding nmap/ffuf/nuclei) is best
+run against a real, authorized, multi-subdomain domain you own — subfinder
+and katana have no public DNS/HTTP surface to discover on an internal-only
+compose hostname like `juice-shop`. Point `$TARGET_ID` at that domain
+instead (still under an approved Engagement) for a real demonstration of
+the hand-off; the shape below works either way.
+
+```bash
+# 1. Launch the seeded full-external-recon playbook
+RECON_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-external-recon\"}" | jq -r .id)
+
+# 2. Poll until Completed
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$RECON_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. Step graph, in dependency order — nmap-recon/ffuf/nuclei-targeted
+#    only start once their DependsOn step (subfinder/katana) has finished
+curl -s localhost:8085/api/scan-jobs/$RECON_JOB_ID/steps -H "$AUTH" | jq '[.[] | {stepKey, dependsOn, status, startedAt, completedAt}]'
+
+# 4. Everything subfinder/katana discovered, feeding the later steps
+curl -s localhost:8085/api/scan-jobs/$RECON_JOB_ID/assets -H "$AUTH" | jq .
+```
+
+A step whose `DependsOn` step didn't reach `Completed` shows up with
+`status: "Skipped"` rather than being launched at all — check
+`PlaybookDagPlannerTests.cs`/`StepArgsBuilderTests.cs` for the ordering and
+hand-off logic proven directly against the same code the Orchestrator runs.
 
 ## Solution layout
 

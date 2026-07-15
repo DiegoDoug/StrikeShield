@@ -12,7 +12,7 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phases 0-4 implemented** (see repo root). Phase 5+ are
+Status: **Phases 0-5 implemented** (see repo root). Phase 6+ are
 specified below, ready to build next.
 
 ---
@@ -221,21 +221,49 @@ and shouldn't be spending on every push regardless.
 
 ---
 
-## Phase 5 — Multi-tool DAG playbooks + asset hand-off
+## Phase 5 — Multi-tool DAG playbooks + asset hand-off ✅
 
 **Goal:** Recon output actually feeds later steps — the "orchestrate
 multiple tools" promise, not just "run tools in parallel."
 
+> **Schema change note:** this phase adds three required columns
+> (`StepKey`, `DependsOn`, `Condition`) plus a unique `(PlaybookId,
+> StepKey)` index to `PlaybookSteps`. If you already ran Phases 1-4
+> locally, drop your Postgres volume first: `docker compose down -v` — the
+> migration's default backfill (`StepKey = ""` for every existing row)
+> would otherwise collide with that unique index the moment a playbook has
+> more than one step (every playbook here except `nuclei-quick` does).
+
 **Deliverables:**
-- `PlaybookStep.dependsOn[]` + `condition` support in the Orchestrator's DAG
-  executor.
-- Recon adapters: Subfinder/Amass (subdomains → `Asset`), Katana
-  (crawled URLs → `Asset`).
-- Add ffuf and Nikto as step types.
-- A per-job shared read-only volume so step N+1 can consume step N's asset
-  list as its target/wordlist input (e.g., subfinder's subdomains become
-  nmap's target list; katana's URLs become ffuf's/nuclei's input list).
-- A default "Full External Recon+Scan" playbook shipped as a template.
+- `PlaybookStep.StepKey`/`DependsOn[]`/`Condition` (`OnSuccess` | `Always`)
+  and a DAG executor in `StrikeShield.Orchestrator`:
+  `PlaybookDagPlanner` topologically sorts steps by `DependsOn` (falling
+  back to the existing `Order` field/tie-break for every Phase 2-4 playbook,
+  none of which declare any dependency, so their execution order is
+  unchanged); a step whose `Condition` is `OnSuccess` (the default) and
+  whose dependency didn't reach `Completed` is recorded as `Skipped`
+  (`StepRunStatus.Skipped`) rather than launched. Independent branches no
+  longer halt the whole job on an unrelated step's failure — only a step's
+  own declared dependencies can skip it.
+- Recon adapters: `SubdomainReconFindingAdapter` (Subfinder's plain-text
+  subdomain list → `Asset`; Amass aliased to the same parser, same idea as
+  Strix → the SARIF adapter), `KatanaFindingAdapter` (crawled-URL JSONL →
+  `Asset`).
+- `FfufFindingAdapter` (discovered paths → `Asset`, plus an Info `Finding`
+  only for a sensitive-path heuristic match — `.git/`, `.env`, backups,
+  etc.) and `NiktoFindingAdapter` (`Finding`, severity defaulted to Low)
+  as new step types.
+- `StepArgsBuilder` expands `"{assetsFile}"`/`"{assetsFile:<AssetType>}"`
+  tokens in `ArgsTemplate` into a path to a newline-delimited file of the
+  step's dependencies' discovered `Asset` values, written into the same
+  shared scan-output volume `"{output}"` already uses — e.g. subfinder's
+  subdomains become nmap's `-iL` host list, katana's URLs become
+  ffuf's/nuclei's input list.
+- A default `full-external-recon` playbook (subfinder + katana feeding
+  nmap/ffuf/nuclei as a DAG, nikto standalone) seeded as a template.
+- `GET /api/scan-jobs/{id}/assets`, and `StepKey`/`DependsOn` now visible on
+  every `PlaybookStepResponse`/`StepRunResponse` so the DAG is inspectable
+  over the API, not just in the seed code.
 
 **Test it:**
 ```bash
@@ -247,9 +275,10 @@ curl localhost:8085/api/scan-jobs/{id}/assets  # expect subdomains/urls discover
 **Acceptance:** step graph executes in dependency order (visible via
 step-run timestamps), and at least one downstream step's actual container
 args are demonstrably built from an upstream step's asset output (not
-hardcoded) — assert this in an integration test, not just by eyeballing logs.
-
----
+hardcoded) — asserted directly against `StepArgsBuilder`/`PlaybookDagPlanner`
+(the same code `PlaybookExecutor` calls to build a real container's `Cmd`)
+in `tests/StrikeShield.Api.Tests/StepArgsBuilderTests.cs` and
+`PlaybookDagPlannerTests.cs`, not just by eyeballing logs.
 
 ## Phase 6 — AI orchestration layer: correlation + adaptive planning
 

@@ -218,6 +218,26 @@ jobs:
           fi
           echo "strix-quick playbook confirmed seeded — launch it yourself with a real LLM_API_KEY to exercise Strix end-to-end (see README.md)."
 
+          # Phase 5 (DAG playbooks + asset hand-off): the DAG ordering and
+          # asset-hand-off logic itself is unit-tested directly against
+          # PlaybookDagPlanner/StepArgsBuilder in the build-and-test job
+          # (tests/StrikeShield.Api.Tests/PlaybookDagPlannerTests.cs,
+          # StepArgsBuilderTests.cs) — genuinely deterministic, unlike a live
+          # run. What's left to confirm here is that full-external-recon
+          # seeded correctly with its declared DependsOn edges intact.
+          # Deliberately NOT launched live: subfinder/katana need a real
+          # public domain with actual subdomains/pages to discover, which
+          # CI's isolated compose network can't provide.
+          echo "Confirming the full-external-recon playbook seeded with its DAG edges intact..."
+          RECON_PLAYBOOK=$(curl -sf "$BASE_URL/api/playbooks" -H "$AUTH" | jq -e '[.[] | select(.slug=="full-external-recon")][0]')
+          echo "$RECON_PLAYBOOK" | jq .
+          NMAP_RECON_DEPENDS_ON=$(echo "$RECON_PLAYBOOK" | jq -r '[.steps[] | select(.stepKey=="nmap-recon")][0].dependsOn[0]')
+          if [ "$NMAP_RECON_DEPENDS_ON" != "subfinder" ]; then
+            echo "Expected full-external-recon's nmap-recon step to depend on 'subfinder', got '$NMAP_RECON_DEPENDS_ON'."
+            exit 1
+          fi
+          echo "full-external-recon playbook confirmed seeded with its DAG edges intact."
+
       - name: Verify no leaked step containers
         if: always()
         run: |

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\StrikeShield.Api\StrikeShield.Api.csproj" />
+    <ProjectReference Include="..\..\src\StrikeShield.Orchestrator\StrikeShield.Orchestrator.csproj" />
   </ItemGroup>
 
 </Project>

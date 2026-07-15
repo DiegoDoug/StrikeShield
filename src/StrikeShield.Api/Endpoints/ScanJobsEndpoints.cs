@@ -1,4 +1,5 @@
 using StrikeShield.Application.Findings;
+using StrikeShield.Application.Playbooks;
 using StrikeShield.Application.ScanJobs;
 
 namespace StrikeShield.Api.Endpoints;
@@ -34,5 +35,32 @@ public static class ScanJobsEndpoints
         // see docs/PHASED_PLAN.md Phase 3 acceptance criteria.
         group.MapGet("/{id:guid}/findings", async (Guid id, IFindingService service, CancellationToken ct) =>
             Results.Ok(await service.GetForScanJobAsync(id, ct)));
+
+        // Everything a recon step discovered (subdomains/URLs/hosts/ports) —
+        // see docs/PHASED_PLAN.md Phase 5 acceptance criteria.
+        group.MapGet("/{id:guid}/assets", async (Guid id, IScanJobService service, CancellationToken ct) =>
+            Results.Ok(await service.GetAssetsAsync(id, ct)));
+
+        // The Adaptive Planner's pending/decided proposals for this
+        // ScanJob (docs/PHASED_PLAN.md Phase 6) — never auto-applied; see
+        // the approve/reject endpoints below.
+        group.MapGet("/{id:guid}/amendments", async (Guid id, IPlaybookAmendmentService service, CancellationToken ct) =>
+            Results.Ok(await service.GetForScanJobAsync(id, ct)));
+
+        // Approving substitutes the amendment's proposed ArgsTemplate for
+        // the target step only for this ScanJob (the shared Playbook
+        // template is never mutated) and, if the job was paused awaiting
+        // this decision, re-queues it so the Orchestrator resumes.
+        group.MapPost(
+            "/{id:guid}/amendments/{amendmentId:guid}/approve",
+            async (Guid id, Guid amendmentId, DecideAmendmentRequest request, IPlaybookAmendmentService service, CancellationToken ct) =>
+                Results.Ok(await service.ApproveAsync(id, amendmentId, request, ct)));
+
+        // Rejecting also un-pauses the job — the target step just runs
+        // with its original, unmodified ArgsTemplate.
+        group.MapPost(
+            "/{id:guid}/amendments/{amendmentId:guid}/reject",
+            async (Guid id, Guid amendmentId, DecideAmendmentRequest request, IPlaybookAmendmentService service, CancellationToken ct) =>
+                Results.Ok(await service.RejectAsync(id, amendmentId, request, ct)));
     }
 }

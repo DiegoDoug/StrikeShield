@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using StrikeShield.Infrastructure.Persistence;
 
 #nullable disable
@@ -9,9 +10,11 @@ using StrikeShield.Infrastructure.Persistence;
 namespace StrikeShield.Infrastructure.Migrations
 {
     [DbContext(typeof(StrikeShieldDbContext))]
-    partial class StrikeShieldDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260716090000_AddDagPlaybookSupport")]
+    partial class AddDagPlaybookSupport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -168,27 +171,6 @@ namespace StrikeShield.Infrastructure.Migrations
                 b.HasKey("Id");
 
                 b.ToTable("Organizations");
-            });
-
-            modelBuilder.Entity("StrikeShield.Domain.Entities.PlaybookAmendment", b =>
-            {
-                b.Property<Guid>("Id").HasColumnType("uuid");
-                b.Property<DateTimeOffset>("CreatedAt").HasColumnType("timestamp with time zone");
-                b.Property<DateTimeOffset?>("DecidedAt").HasColumnType("timestamp with time zone");
-                b.Property<string>("DecidedBy").HasMaxLength(200).HasColumnType("character varying(200)");
-                b.Property<string>("ProposedArgsTemplate").IsRequired().HasMaxLength(2000).HasColumnType("character varying(2000)");
-                b.Property<Guid>("ProposedByStepRunId").HasColumnType("uuid");
-                b.Property<string>("Rationale").IsRequired().HasColumnType("text");
-                b.Property<Guid>("ScanJobId").HasColumnType("uuid");
-                b.Property<int>("Status").HasColumnType("integer");
-                b.Property<Guid>("TargetPlaybookStepId").HasColumnType("uuid");
-
-                b.HasKey("Id");
-                b.HasIndex("ProposedByStepRunId");
-                b.HasIndex("ScanJobId");
-                b.HasIndex("TargetPlaybookStepId");
-
-                b.ToTable("PlaybookAmendments");
             });
 
             modelBuilder.Entity("StrikeShield.Domain.Entities.Playbook", b =>
@@ -388,31 +370,6 @@ namespace StrikeShield.Infrastructure.Migrations
                 b.Navigation("Finding");
             });
 
-            modelBuilder.Entity("StrikeShield.Domain.Entities.PlaybookAmendment", b =>
-            {
-                b.HasOne("StrikeShield.Domain.Entities.StepRun", "ProposedByStepRun")
-                    .WithMany()
-                    .HasForeignKey("ProposedByStepRunId")
-                    .OnDelete(DeleteBehavior.Cascade)
-                    .IsRequired();
-
-                b.HasOne("StrikeShield.Domain.Entities.ScanJob", "ScanJob")
-                    .WithMany("Amendments")
-                    .HasForeignKey("ScanJobId")
-                    .OnDelete(DeleteBehavior.Cascade)
-                    .IsRequired();
-
-                b.HasOne("StrikeShield.Domain.Entities.PlaybookStep", "TargetPlaybookStep")
-                    .WithMany()
-                    .HasForeignKey("TargetPlaybookStepId")
-                    .OnDelete(DeleteBehavior.Restrict)
-                    .IsRequired();
-
-                b.Navigation("ProposedByStepRun");
-                b.Navigation("ScanJob");
-                b.Navigation("TargetPlaybookStep");
-            });
-
             modelBuilder.Entity("StrikeShield.Domain.Entities.PlaybookStep", b =>
             {
                 b.HasOne("StrikeShield.Domain.Entities.Playbook", "Playbook")
@@ -534,7 +491,6 @@ namespace StrikeShield.Infrastructure.Migrations
 
             modelBuilder.Entity("StrikeShield.Domain.Entities.ScanJob", b =>
             {
-                b.Navigation("Amendments");
                 b.Navigation("Findings");
                 b.Navigation("StepRuns");
             });

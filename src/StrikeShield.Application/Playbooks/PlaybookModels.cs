@@ -1,22 +1,29 @@
 using StrikeShield.Domain.Entities;
+using StrikeShield.Domain.Enums;
 
 namespace StrikeShield.Application.Playbooks;
 
 public record PlaybookStepResponse(
     Guid Id,
     int Order,
+    string StepKey,
     string ToolName,
     string ImageRepository,
     string ImageTag,
-    int TimeoutSeconds)
+    int TimeoutSeconds,
+    IReadOnlyList<string> DependsOn,
+    StepCondition Condition)
 {
     public static PlaybookStepResponse FromEntity(PlaybookStep entity) => new(
         entity.Id,
         entity.Order,
+        entity.StepKey,
         entity.ToolName,
         entity.ImageRepository,
         entity.ImageTag,
-        entity.TimeoutSeconds);
+        entity.TimeoutSeconds,
+        entity.DependsOn,
+        entity.Condition);
 }
 
 public record PlaybookResponse(

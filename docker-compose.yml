@@ -117,6 +117,14 @@ services:
       # to run against without it, same as any other BYOK integration.
       Orchestrator__StrixLlmModel: "${STRIKESHIELD_STRIX_LLM_MODEL:-anthropic/claude-sonnet-4-6}"
       Orchestrator__StrixLlmApiKey: "${STRIKESHIELD_STRIX_LLM_API_KEY:-}"
+      # BYOK for the Correlator's LLM-escalation pass and the Adaptive
+      # Planner (docs/PHASED_PLAN.md Phase 6) — a separate key/model from
+      # Strix's above since these call Anthropic's API directly rather than
+      # through Strix's own litellm-style routing. Empty by default; both
+      # features simply have nothing to run against without it (the
+      # deterministic Correlator pass and every other tool still work).
+      AiOrchestration__LlmModel: "${STRIKESHIELD_AI_LLM_MODEL:-claude-sonnet-4-6}"
+      AiOrchestration__LlmApiKey: "${STRIKESHIELD_AI_LLM_API_KEY:-}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - strikeshield-scan-output:/scan-output

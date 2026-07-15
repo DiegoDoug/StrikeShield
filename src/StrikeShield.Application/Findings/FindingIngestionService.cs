@@ -15,7 +15,11 @@ public class FindingIngestionService : IFindingIngestionService
     private static readonly IReadOnlyDictionary<string, string> AdapterFormatAliases =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["strix"] = "sarif"
+            ["strix"] = "sarif",
+            // Amass's default plain-text subdomain-list output is close
+            // enough to Subfinder's to share one parser (docs/PHASED_PLAN.md
+            // Phase 5) — see SubdomainReconFindingAdapter.
+            ["amass"] = "subfinder"
         };
 
     private readonly IAppDbContext _db;

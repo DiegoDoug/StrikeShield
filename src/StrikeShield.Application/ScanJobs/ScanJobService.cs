@@ -105,4 +105,28 @@ public class ScanJobService : IScanJobService
 
         return stepRuns.Select(StepRunResponse.FromEntity).ToList();
     }
+
+    public async Task<IReadOnlyList<AssetResponse>> GetAssetsAsync(Guid scanJobId, CancellationToken cancellationToken = default)
+    {
+        var scanJobExists = await _db.ScanJobs.AnyAsync(s => s.Id == scanJobId, cancellationToken);
+        if (!scanJobExists)
+        {
+            throw new NotFoundException($"ScanJob '{scanJobId}' was not found.");
+        }
+
+        // Assets don't carry ScanJobId directly — they're attributed to the
+        // StepRun that discovered them (docs/ARCHITECTURE.md §4), so this
+        // joins through StepRuns to scope them to one job.
+        var stepRunIds = await _db.StepRuns
+            .Where(s => s.ScanJobId == scanJobId)
+            .Select(s => s.Id)
+            .ToListAsync(cancellationToken);
+
+        var assets = await _db.Assets
+            .Where(a => a.DiscoveredByStepRunId != null && stepRunIds.Contains(a.DiscoveredByStepRunId!.Value))
+            .OrderBy(a => a.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return assets.Select(AssetResponse.FromEntity).ToList();
+    }
 }

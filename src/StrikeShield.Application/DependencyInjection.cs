@@ -27,11 +27,17 @@ public static class DependencyInjection
         services.AddScoped<IEngagementService, EngagementService>();
         services.AddScoped<IPlaybookService, PlaybookService>();
         services.AddScoped<IScanJobService, ScanJobService>();
+        services.AddScoped<IAdaptivePlanner, AdaptivePlanner>();
+        services.AddScoped<IPlaybookAmendmentService, PlaybookAmendmentService>();
 
         services.AddScoped<IFindingAdapter, NucleiFindingAdapter>();
         services.AddScoped<IFindingAdapter, SarifFindingAdapter>();
         services.AddScoped<IFindingAdapter, ZapFindingAdapter>();
         services.AddScoped<IFindingAdapter, NmapFindingAdapter>();
+        services.AddScoped<IFindingAdapter, SubdomainReconFindingAdapter>();
+        services.AddScoped<IFindingAdapter, KatanaFindingAdapter>();
+        services.AddScoped<IFindingAdapter, FfufFindingAdapter>();
+        services.AddScoped<IFindingAdapter, NiktoFindingAdapter>();
         services.AddScoped<IFindingIngestionService, FindingIngestionService>();
         services.AddScoped<ICorrelator, Correlator>();
         services.AddScoped<IFindingService, FindingService>();

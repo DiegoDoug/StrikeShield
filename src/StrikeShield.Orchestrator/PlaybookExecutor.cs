@@ -77,11 +77,14 @@ public class PlaybookExecutor : IPlaybookExecutor
                 stepRun.CompletedAt = DateTimeOffset.UtcNow;
 
                 // Container stdout/stderr is the only way to diagnose a
-                // nonzero exit or timeout after the container's been
-                // removed — surface it via the API instead of requiring
-                // someone to have been watching `docker compose logs`
-                // live when it happened.
-                if (stepRun.Status != StepRunStatus.Completed && !string.IsNullOrWhiteSpace(result.ContainerLogs))
+                // nonzero exit/timeout, or a "succeeded" tool that still
+                // didn't produce its expected output file (e.g. a report
+                // writer failing silently past its own exit-code check),
+                // after the container's been removed — surface it via the
+                // API instead of requiring someone to have been watching
+                // `docker compose logs` live when it happened.
+                if ((stepRun.Status != StepRunStatus.Completed || result.OutputContent is null)
+                    && !string.IsNullOrWhiteSpace(result.ContainerLogs))
                 {
                     stepRun.ErrorMessage = Truncate(result.ContainerLogs, 4000);
                 }
@@ -154,6 +157,20 @@ public class PlaybookExecutor : IPlaybookExecutor
         // (Orchestrator) container and the step container below, so a
         // directory created here is immediately visible to the step.
         Directory.CreateDirectory(outputDir);
+
+        // This container (running as root) owns the directory it just
+        // created, but several tool images (ZAP's, notably) run as a
+        // fixed non-root UID and need to write their output into it —
+        // world-writable is fine here since it only ever holds ephemeral
+        // per-job scan output, nothing sensitive.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                outputDir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
+        }
 
         var args = step.ArgsTemplate
             .Replace("{target}", target.Value)

@@ -34,10 +34,10 @@ services:
       context: .
       dockerfile: src/StrikeShield.Api/Dockerfile
     ports:
-      - "${STRIKESHIELD_API_PORT:-8080}:8080"
+      - "${STRIKESHIELD_API_PORT:-8085}:8085"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_URLS: http://+:8085
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=strikeshield;Username=strikeshield;Password=strikeshield"
       # Dev-only defaults below. Override via a local .env file (see
       # .env.example) before running against anything but a throwaway

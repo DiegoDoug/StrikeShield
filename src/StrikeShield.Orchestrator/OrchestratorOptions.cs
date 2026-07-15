@@ -13,4 +13,13 @@ public class OrchestratorOptions
     public string ScanOutputVolumeName { get; set; } = "strikeshield-scan-output";
     public string ScanOutputMountPath { get; set; } = "/scan-output";
     public int PollIntervalSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// BYOK for the "strix" step type (docs/ARCHITECTURE.md §3) — instance-
+    /// wide for this phase rather than a per-organization encrypted secret
+    /// (that's Phase 10 scope). Empty StrixLlmApiKey simply means the strix
+    /// step type has nothing to run against, same as any BYOK integration.
+    /// </summary>
+    public string StrixLlmModel { get; set; } = "anthropic/claude-sonnet-4-6";
+    public string StrixLlmApiKey { get; set; } = string.Empty;
 }

@@ -19,6 +19,14 @@ namespace StrikeShield.Orchestrator;
 /// </summary>
 public class PlaybookExecutor : IPlaybookExecutor
 {
+    // Strix's own documented behavior: "-n" exits non-zero when it finds
+    // vulnerabilities — that's a result, not a failure (same idea as
+    // zap-baseline's WARN/FAIL exit codes, but zap's is already fully
+    // handled by the -I flag in its seeded ArgsTemplate). A genuine crash
+    // still gets caught below since it wouldn't have produced findings.sarif.
+    private static readonly HashSet<string> ToolsWhereNonZeroExitCanMeanFindingsFound =
+        new(StringComparer.OrdinalIgnoreCase) { "strix" };
+
     private readonly IDockerClient _dockerClient;
     private readonly StrikeShieldDbContext _dbContext;
     private readonly IFindingIngestionService _findingIngestionService;
@@ -69,9 +77,13 @@ public class PlaybookExecutor : IPlaybookExecutor
 
                 stepRun.ExitCode = result.ExitCode;
                 stepRun.ContainerId = result.ContainerId;
+
+                var succeededDespiteExitCode = result.ExitCode != 0
+                    && ToolsWhereNonZeroExitCanMeanFindingsFound.Contains(step.ToolName)
+                    && result.OutputContent is not null;
                 stepRun.Status = result.TimedOut
                     ? StepRunStatus.TimedOut
-                    : result.ExitCode == 0
+                    : result.ExitCode == 0 || succeededDespiteExitCode
                         ? StepRunStatus.Completed
                         : StepRunStatus.Failed;
                 stepRun.CompletedAt = DateTimeOffset.UtcNow;
@@ -109,6 +121,23 @@ public class PlaybookExecutor : IPlaybookExecutor
                         step.ToolName,
                         result.OutputContent,
                         cancellationToken);
+                }
+
+                // Secondary, non-ingested files (Strix's run.json cost/run
+                // metadata) — stored for visibility only, no adapter parses
+                // these.
+                if (result.AdditionalArtifacts is not null)
+                {
+                    foreach (var (fileName, content) in result.AdditionalArtifacts)
+                    {
+                        _dbContext.Artifacts.Add(new Artifact
+                        {
+                            StepRunId = stepRun.Id,
+                            FileName = fileName,
+                            ContentType = "text/plain",
+                            Content = content
+                        });
+                    }
                 }
 
                 if (stepRun.Status != StepRunStatus.Completed)
@@ -214,11 +243,37 @@ public class PlaybookExecutor : IPlaybookExecutor
             });
         }
 
-        await _dockerClient.Images.CreateImageAsync(
-            new ImagesCreateParameters { FromImage = step.ImageRepository, Tag = step.ImageTag },
-            null,
-            new Progress<JSONMessage>(),
-            cancellationToken);
+        var isStrix = step.ToolName.Equals("strix", StringComparison.OrdinalIgnoreCase);
+        var env = new List<string>();
+
+        if (isStrix)
+        {
+            // Strix's own runtime talks to the Docker daemon directly via
+            // the Python docker SDK (confirmed in strix-agent's own
+            // pyproject.toml — docker>=7.1.0, no CLI shell-out) to spawn its
+            // own Kali-based sandbox for dynamic testing. This is the one
+            // deliberate, documented exception to "only the Orchestrator
+            // touches docker.sock" (docs/ARCHITECTURE.md §5/§8) — Strix
+            // fundamentally needs it to do its job, the same way it needs
+            // it when run outside a container at all.
+            mounts.Add(new Mount { Type = "bind", Source = "/var/run/docker.sock", Target = "/var/run/docker.sock" });
+            env.Add($"STRIX_LLM={_options.StrixLlmModel}");
+            env.Add($"LLM_API_KEY={_options.StrixLlmApiKey}");
+        }
+
+        // Docker.DotNet's CreateImageAsync always attempts a registry pull —
+        // fine for every tool image we reference (all public), but
+        // strikeshield/-prefixed images are our own, built locally only by
+        // `docker compose build` (see docker-compose.yml's strix-runner
+        // service); pulling them would just fail against no registry.
+        if (!step.ImageRepository.StartsWith("strikeshield/", StringComparison.OrdinalIgnoreCase))
+        {
+            await _dockerClient.Images.CreateImageAsync(
+                new ImagesCreateParameters { FromImage = step.ImageRepository, Tag = step.ImageTag },
+                null,
+                new Progress<JSONMessage>(),
+                cancellationToken);
+        }
 
         var createResponse = await _dockerClient.Containers.CreateContainerAsync(
             new CreateContainerParameters
@@ -226,6 +281,12 @@ public class PlaybookExecutor : IPlaybookExecutor
                 Name = $"strikeshield-step-{stepRunId}",
                 Image = $"{step.ImageRepository}:{step.ImageTag}",
                 Cmd = args,
+                Env = env,
+                // Strix has no flag to control its output path (it always
+                // writes to "./strix_runs/<auto-generated-run-name>/"), so
+                // the only way to keep its output inside our tracked,
+                // per-step directory is to make that directory its cwd.
+                WorkingDir = isStrix ? outputDir : null,
                 Labels = new Dictionary<string, string>
                 {
                     ["strikeshield.scan-job-id"] = scanJobId.ToString(),
@@ -314,9 +375,51 @@ public class PlaybookExecutor : IPlaybookExecutor
             }
         }
 
+        if (isStrix)
+        {
+            var (sarifContent, additionalArtifacts) = await TryReadStrixOutputAsync(outputDir);
+            return new StepExecutionResult(exitCode, timedOut, containerId, sarifContent, "findings.sarif", containerLogs, additionalArtifacts);
+        }
+
         var outputContent = await TryReadOutputFileAsync(outputDir, outputFileName);
 
         return new StepExecutionResult(exitCode, timedOut, containerId, outputContent, outputFileName, containerLogs);
+    }
+
+    /// <summary>
+    /// Strix has no flag to fix its output filename/path (see the
+    /// WorkingDir comment above) — it always writes
+    /// "./strix_runs/&lt;auto-generated-run-name&gt;/", so this globs for the
+    /// run directory and the .sarif file inside it rather than assuming an
+    /// exact path.
+    /// </summary>
+    private static async Task<(string? SarifContent, List<(string FileName, string Content)>? AdditionalArtifacts)> TryReadStrixOutputAsync(string outputDir)
+    {
+        var runsDir = Path.Combine(outputDir, "strix_runs");
+        if (!Directory.Exists(runsDir))
+        {
+            return (null, null);
+        }
+
+        // One target per ScanJob step means exactly one run directory is
+        // expected; take the first if Strix ever surprises us with more.
+        var runDir = Directory.GetDirectories(runsDir).FirstOrDefault();
+        if (runDir is null)
+        {
+            return (null, null);
+        }
+
+        var sarifPath = Directory.GetFiles(runDir, "*.sarif", SearchOption.AllDirectories).FirstOrDefault();
+        var sarifContent = sarifPath is not null ? await File.ReadAllTextAsync(sarifPath) : null;
+
+        var additionalArtifacts = new List<(string, string)>();
+        var runJsonPath = Path.Combine(runDir, "run.json");
+        if (File.Exists(runJsonPath))
+        {
+            additionalArtifacts.Add(("run.json", await File.ReadAllTextAsync(runJsonPath)));
+        }
+
+        return (sarifContent, additionalArtifacts.Count > 0 ? additionalArtifacts : null);
     }
 
     private static async Task<string?> TryReadOutputFileAsync(string outputDir, string fileName)
@@ -355,5 +458,6 @@ public class PlaybookExecutor : IPlaybookExecutor
         string ContainerId,
         string? OutputContent,
         string OutputFileName,
-        string? ContainerLogs);
+        string? ContainerLogs,
+        IReadOnlyList<(string FileName, string Content)>? AdditionalArtifacts = null);
 }

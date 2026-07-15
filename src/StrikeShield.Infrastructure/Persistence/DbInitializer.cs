@@ -191,9 +191,11 @@ public static class DbInitializer
             ImageTag = "stable",
             // -I: don't fail the container on WARN-level alerts — findings
             // are the expected, desired output of a baseline scan, not an
-            // execution error. -J's path wins over ZAP's own /zap/wrk/
-            // base dir because it's given as an absolute path here.
-            ArgsTemplate = "zap-baseline.py -t {target} -J {output} -I",
+            // execution error. {outputRelative} (not {output}): the
+            // default automation-framework mode resolves -J relative to
+            // /zap/wrk regardless of an absolute path (see
+            // PlaybookExecutor.RunStepContainerAsync).
+            ArgsTemplate = "zap-baseline.py -t {target} -J {outputRelative} -I",
             TimeoutSeconds = 900,
             MemoryLimitBytes = 1024L * 1024 * 1024,
             NanoCpus = 1_000_000_000L

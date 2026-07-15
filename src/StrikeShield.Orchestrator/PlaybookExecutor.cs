@@ -146,6 +146,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         CancellationToken cancellationToken)
     {
         var outputFileName = OutputFileNameFor(step.ToolName);
+        var relativeOutputPath = $"{scanJobId}/{stepRunId}/{outputFileName}";
         var outputDir = Path.Combine(_options.ScanOutputMountPath, scanJobId.ToString(), stepRunId.ToString());
         var containerOutputPath = $"{outputDir}/{outputFileName}";
 
@@ -158,6 +159,14 @@ public class PlaybookExecutor : IPlaybookExecutor
             .Replace("{target}", target.Value)
             .Replace("{targetHost}", ExtractHost(target.Value))
             .Replace("{output}", containerOutputPath)
+            // A path relative to the shared volume's root — for tools
+            // (zap) whose own report writer joins the path it's given
+            // against its own working directory rather than honoring an
+            // absolute path, so {output} silently lands somewhere we
+            // never look. Resolves to the same file as {output} as long
+            // as the tool's container also mounts the shared volume at
+            // its own working directory (see the zap-specific mount below).
+            .Replace("{outputRelative}", relativeOutputPath)
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .ToList();
 
@@ -172,12 +181,12 @@ public class PlaybookExecutor : IPlaybookExecutor
         };
 
         // zap-baseline.py hard-validates that /zap/wrk is mounted before
-        // accepting ANY file-based option (-J/-r/...), regardless of
-        // whether the path it's given is absolute — so it rejects our
-        // {output} path (elsewhere on the shared volume) unless this
-        // exact directory is also present. The actual file still lands
-        // at containerOutputPath since Python's os.path.join discards a
-        // base dir when joined with an absolute path.
+        // accepting ANY file-based option (-J/-r/...). Its default
+        // "automation framework" mode also resolves the report path
+        // relative to /zap/wrk regardless of whether it's given as
+        // absolute (unlike the legacy code path, which does honor an
+        // absolute path) — hence {outputRelative} in this step's
+        // ArgsTemplate instead of {output}.
         if (step.ToolName.Equals("zap", StringComparison.OrdinalIgnoreCase))
         {
             mounts.Add(new Mount

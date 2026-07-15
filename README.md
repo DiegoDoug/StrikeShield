@@ -20,7 +20,28 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 5: multi-tool DAG playbooks + asset hand-off.** `PlaybookStep` now
+**Phase 6: the AI orchestration layer — Correlator LLM-escalation +
+Adaptive Planner.** `ILlmClient` is the one seam both extension points call
+through (`StrikeShield.Application.Ai`): `AnthropicLlmClient` (a plain HTTP
+call to Anthropic's Messages API) when `STRIKESHIELD_AI_LLM_API_KEY` is
+set, `NullLlmClient` otherwise — the same "nothing to run against without
+a key" contract Strix has. The Correlator's deterministic exact-fingerprint
+pass is unchanged; a new escalation pass sends ambiguous cross-tool
+clusters (same target/severity, no shared fingerprint) **one batched LLM
+call each** for a merge/no-merge + confidence judgment, and never touches
+the LLM at all for deterministic matches or with no key configured
+(`CorrelatorLlmEscalationTests.cs` proves both, via a fake `ILlmClient`).
+The Adaptive Planner proposes a `PlaybookAmendment` — a full replacement
+`ArgsTemplate` for one not-yet-run step later in the same `ScanJob` — as a
+pending, human-approved diff after a step discovers new assets; it's never
+applied automatically, and never mutates the shared `PlaybookStep`
+template. The Orchestrator's DAG executor now pauses a `ScanJob`
+(`AwaitingApproval`) the moment a Pending amendment targets its next step,
+and resumes safely (already-run steps aren't re-launched) once
+`POST /api/scan-jobs/{id}/amendments/{amendmentId}/approve` (or `/reject`)
+re-queues it. See `AdaptivePlannerTests.cs` for the proposal logic.
+
+**Phase 5** (still active): multi-tool DAG playbooks + asset hand-off. `PlaybookStep` now
 carries a `StepKey`/`DependsOn[]`/`Condition`, and the Orchestrator's new
 `PlaybookDagPlanner` topologically sorts a playbook's steps instead of just
 running them in `Order` — every Phase 2-4 playbook still runs in the same
@@ -268,6 +289,43 @@ A step whose `DependsOn` step didn't reach `Completed` shows up with
 `status: "Skipped"` rather than being launched at all — check
 `PlaybookDagPlannerTests.cs`/`StepArgsBuilderTests.cs` for the ordering and
 hand-off logic proven directly against the same code the Orchestrator runs.
+
+### Phase 6 walkthrough (Correlator LLM-escalation + Adaptive Planner, via curl)
+
+Requires your own LLM API key — copy `.env.example` to `.env` and set
+`STRIKESHIELD_AI_LLM_API_KEY` first. Every other tool/phase works without
+this; the Correlator's escalation pass and the Adaptive Planner
+specifically have nothing to run against without it.
+
+```bash
+# 1. Launch a recon playbook against a real, authorized target (see the
+#    Phase 5 walkthrough above) — once a step discovers new assets, the
+#    Adaptive Planner may propose an amendment to a later, not-yet-run step
+RECON_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-external-recon\"}" | jq -r .id)
+
+# 2. Poll — a Pending amendment pauses the job (status: "AwaitingApproval")
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$RECON_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. See the proposal (never auto-applied)
+curl -s localhost:8085/api/scan-jobs/$RECON_JOB_ID/amendments -H "$AUTH" | jq .
+
+# 4a. Approve it — the target step now runs with the proposed ArgsTemplate
+#     for this ScanJob only (the shared Playbook template is untouched),
+#     and the job resumes automatically
+curl -s -X POST localhost:8085/api/scan-jobs/$RECON_JOB_ID/amendments/{amendmentId}/approve \
+  -H "$AUTH" -H 'Content-Type: application/json' -d '{"decidedBy":"you@example.com"}' | jq .
+
+# 4b. ...or reject it — the job resumes and that step runs unmodified
+# curl -s -X POST localhost:8085/api/scan-jobs/$RECON_JOB_ID/amendments/{amendmentId}/reject \
+#   -H "$AUTH" -H 'Content-Type: application/json' -d '{"decidedBy":"you@example.com"}' | jq .
+```
+
+Cross-tool correlation's LLM-escalation path (merging findings that share a
+target/severity but disagree on everything else) is proven deterministically
+with a fake `ILlmClient` in `tests/StrikeShield.Api.Tests/CorrelatorLlmEscalationTests.cs`
+— including that the LLM is never called for deterministic matches or with
+no key configured — rather than depending on a live model's output.
 
 ## Solution layout
 

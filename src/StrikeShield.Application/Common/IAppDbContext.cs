@@ -25,6 +25,7 @@ public interface IAppDbContext
     DbSet<FindingEvidence> FindingEvidence { get; }
     DbSet<Asset> Assets { get; }
     DbSet<CorrelationGroup> CorrelationGroups { get; }
+    DbSet<PlaybookAmendment> PlaybookAmendments { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

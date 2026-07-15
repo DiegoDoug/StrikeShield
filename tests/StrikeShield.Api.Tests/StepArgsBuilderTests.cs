@@ -50,7 +50,7 @@ public class StepArgsBuilderTests : IDisposable
         };
 
         var args = StepArgsBuilder.Build(
-            step,
+            step.ArgsTemplate,
             target,
             _outputDir,
             Path.Combine(_outputDir, "output.xml"),
@@ -84,7 +84,7 @@ public class StepArgsBuilderTests : IDisposable
         };
 
         var args = StepArgsBuilder.Build(
-            step,
+            step.ArgsTemplate,
             target,
             _outputDir,
             Path.Combine(_outputDir, "output.jsonl"),
@@ -108,7 +108,7 @@ public class StepArgsBuilderTests : IDisposable
         };
 
         var args = StepArgsBuilder.Build(
-            step,
+            step.ArgsTemplate,
             target,
             _outputDir,
             Path.Combine(_outputDir, "output.xml"),
@@ -130,7 +130,7 @@ public class StepArgsBuilderTests : IDisposable
         };
 
         var args = StepArgsBuilder.Build(
-            step,
+            step.ArgsTemplate,
             target,
             _outputDir,
             Path.Combine(_outputDir, "output.xml"),

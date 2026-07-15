@@ -27,6 +27,8 @@ public static class DependencyInjection
         services.AddScoped<IEngagementService, EngagementService>();
         services.AddScoped<IPlaybookService, PlaybookService>();
         services.AddScoped<IScanJobService, ScanJobService>();
+        services.AddScoped<IAdaptivePlanner, AdaptivePlanner>();
+        services.AddScoped<IPlaybookAmendmentService, PlaybookAmendmentService>();
 
         services.AddScoped<IFindingAdapter, NucleiFindingAdapter>();
         services.AddScoped<IFindingAdapter, SarifFindingAdapter>();

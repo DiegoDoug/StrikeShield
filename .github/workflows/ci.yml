@@ -201,6 +201,27 @@ jobs:
           fi
           echo "Found $FINDING_COUNT normalized finding(s) — the cross-tool ingestion pipeline is live and working."
 
+          # Phase 6 (Correlator LLM-escalation + Adaptive Planner):
+          # deliberately no live LLM call here, same reasoning as Strix
+          # below — it needs a real BYOK key CI doesn't have. What's
+          # unit-tested deterministically in the build-and-test job
+          # (CorrelatorLlmEscalationTests.cs, AdaptivePlannerTests.cs) is
+          # the merge/no-merge judgment and amendment-proposal logic itself
+          # via a fake ILlmClient. What CI *can* verify live: with no
+          # AiOrchestration:LlmApiKey configured, the full-baseline job
+          # above still completed and correlated normally (NullLlmClient's
+          # escalation pass is a true no-op), and the /amendments endpoint
+          # is reachable and returns an empty list rather than erroring.
+          echo "Confirming the amendments endpoint is reachable with no pending amendments (no AI key configured)..."
+          AMENDMENTS_JSON=$(curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/amendments" -H "$AUTH")
+          echo "$AMENDMENTS_JSON" | jq .
+          AMENDMENT_COUNT=$(echo "$AMENDMENTS_JSON" | jq 'length')
+          if [ "$AMENDMENT_COUNT" -ne 0 ]; then
+            echo "Expected zero amendments with no AI key configured, found $AMENDMENT_COUNT."
+            exit 1
+          fi
+          echo "Amendments endpoint confirmed reachable — launch full-external-recon yourself with a real AiOrchestration:LlmApiKey to exercise the Adaptive Planner end-to-end (see README.md)."
+
           # Phase 4 (Strix): deliberately NOT launched here. It needs a
           # real, paid LLM API key (BYOK, docs/PHASED_PLAN.md Phase 4) which
           # CI doesn't have and shouldn't be spending on every push anyway.

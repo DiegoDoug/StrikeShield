@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StrikeShield.Application.Findings;
+using StrikeShield.Application.Playbooks;
 using StrikeShield.Domain.Entities;
 using StrikeShield.Domain.Enums;
 using StrikeShield.Infrastructure.Persistence;
@@ -32,6 +33,7 @@ public class PlaybookExecutor : IPlaybookExecutor
     private readonly StrikeShieldDbContext _dbContext;
     private readonly IFindingIngestionService _findingIngestionService;
     private readonly ICorrelator _correlator;
+    private readonly IAdaptivePlanner _adaptivePlanner;
     private readonly OrchestratorOptions _options;
     private readonly ILogger<PlaybookExecutor> _logger;
 
@@ -40,6 +42,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         StrikeShieldDbContext dbContext,
         IFindingIngestionService findingIngestionService,
         ICorrelator correlator,
+        IAdaptivePlanner adaptivePlanner,
         IOptions<OrchestratorOptions> options,
         ILogger<PlaybookExecutor> logger)
     {
@@ -47,6 +50,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         _dbContext = dbContext;
         _findingIngestionService = findingIngestionService;
         _correlator = correlator;
+        _adaptivePlanner = adaptivePlanner;
         _options = options.Value;
         _logger = logger;
     }
@@ -61,6 +65,12 @@ public class PlaybookExecutor : IPlaybookExecutor
         var orderedSteps = PlaybookDagPlanner.TopologicalOrder(playbook.Steps.ToList());
         var stepRunsByStepKey = new Dictionary<string, StepRun>(StringComparer.OrdinalIgnoreCase);
 
+        // Loaded once per invocation so a resumed job (see below) picks up
+        // whatever an operator decided since the last run.
+        var amendments = await _dbContext.PlaybookAmendments
+            .Where(a => a.ScanJobId == scanJob.Id)
+            .ToListAsync(cancellationToken);
+
         // Unlike Phase 2-4's single linear chain, a DAG's branches are
         // independent: an unrelated step failing shouldn't stop a step
         // with no dependency on it. Only a step's own DependsOn (evaluated
@@ -70,6 +80,35 @@ public class PlaybookExecutor : IPlaybookExecutor
 
         foreach (var step in orderedSteps)
         {
+            // Resume support (docs/PHASED_PLAN.md Phase 6): a job paused
+            // AwaitingApproval gets re-queued once its amendment is
+            // approved/rejected, and ExecuteAsync runs again from the top —
+            // steps that already have a StepRun from a prior invocation
+            // must not be re-created/re-launched.
+            var existingStepRun = await _dbContext.StepRuns
+                .FirstOrDefaultAsync(sr => sr.ScanJobId == scanJob.Id && sr.PlaybookStepId == step.Id, cancellationToken);
+            if (existingStepRun is not null)
+            {
+                stepRunsByStepKey[step.StepKey] = existingStepRun;
+                if (existingStepRun.Status is StepRunStatus.Failed or StepRunStatus.TimedOut)
+                {
+                    anyStepFailed = true;
+                }
+
+                continue;
+            }
+
+            // The Adaptive Planner's pause point (docs/PHASED_PLAN.md
+            // Phase 6): a Pending amendment targeting this not-yet-run step
+            // means a human hasn't decided yet — stop here rather than
+            // running it either with or without the proposed change.
+            if (amendments.Any(a => a.TargetPlaybookStepId == step.Id && a.Status == PlaybookAmendmentStatus.Pending))
+            {
+                scanJob.Status = ScanJobStatus.AwaitingApproval;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
             var dependencyStepRuns = step.DependsOn
                 .Select(depKey => stepRunsByStepKey.TryGetValue(depKey, out var sr) ? sr : null)
                 .Where(sr => sr is not null)
@@ -111,7 +150,23 @@ public class PlaybookExecutor : IPlaybookExecutor
                         .ToListAsync(cancellationToken)
                     : new List<Asset>();
 
-                var result = await RunStepContainerAsync(step, target, scanJob.Id, stepRun.Id, upstreamAssets, cancellationToken);
+                // An Approved amendment (docs/PHASED_PLAN.md Phase 6)
+                // substitutes its ProposedArgsTemplate for this run only —
+                // the shared PlaybookStep template row is never mutated.
+                var approvedArgsTemplate = amendments
+                    .Where(a => a.TargetPlaybookStepId == step.Id && a.Status == PlaybookAmendmentStatus.Approved)
+                    .OrderByDescending(a => a.DecidedAt)
+                    .Select(a => a.ProposedArgsTemplate)
+                    .FirstOrDefault();
+
+                var result = await RunStepContainerAsync(
+                    step,
+                    approvedArgsTemplate ?? step.ArgsTemplate,
+                    target,
+                    scanJob.Id,
+                    stepRun.Id,
+                    upstreamAssets,
+                    cancellationToken);
 
                 stepRun.ExitCode = result.ExitCode;
                 stepRun.ContainerId = result.ContainerId;
@@ -182,6 +237,32 @@ public class PlaybookExecutor : IPlaybookExecutor
                 {
                     anyStepFailed = true;
                 }
+                else
+                {
+                    // The Adaptive Planner (docs/ARCHITECTURE.md §3, Phase
+                    // 6): after a successful step, it may propose an
+                    // amendment to a not-yet-run downstream step — never
+                    // applied automatically, just recorded Pending. A no-op
+                    // (no LLM call) if no BYOK key is configured.
+                    var stepIndex = orderedSteps.IndexOf(step);
+                    var remainingSteps = orderedSteps
+                        .Skip(stepIndex + 1)
+                        .Where(s => !stepRunsByStepKey.ContainsKey(s.StepKey))
+                        .ToList();
+
+                    if (remainingSteps.Count > 0)
+                    {
+                        await _adaptivePlanner.ProposeAmendmentAsync(scanJob.Id, stepRun.Id, remainingSteps, cancellationToken);
+
+                        // Refresh the in-memory snapshot: if that call just
+                        // created a Pending amendment targeting a step later
+                        // in *this same* loop, the pause-check above must
+                        // see it — it was fetched before this iteration ran.
+                        amendments = await _dbContext.PlaybookAmendments
+                            .Where(a => a.ScanJobId == scanJob.Id)
+                            .ToListAsync(cancellationToken);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -205,6 +286,7 @@ public class PlaybookExecutor : IPlaybookExecutor
 
     private async Task<StepExecutionResult> RunStepContainerAsync(
         PlaybookStep step,
+        string effectiveArgsTemplate,
         Target target,
         Guid scanJobId,
         Guid stepRunId,
@@ -245,7 +327,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         // "{assetsFile}"/"{assetsFile:<AssetType>}": this step's upstream
         // dependencies' discovered Assets, written to a file in this same
         // shared volume (docs/PHASED_PLAN.md Phase 5) — see StepArgsBuilder.
-        var args = StepArgsBuilder.Build(step, target, outputDir, containerOutputPath, relativeOutputPath, upstreamAssets);
+        var args = StepArgsBuilder.Build(effectiveArgsTemplate, target, outputDir, containerOutputPath, relativeOutputPath, upstreamAssets);
 
         var mounts = new List<Mount>
         {

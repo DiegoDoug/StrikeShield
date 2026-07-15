@@ -27,4 +27,5 @@ public class ScanJob
 
     public ICollection<StepRun> StepRuns { get; set; } = new List<StepRun>();
     public ICollection<Finding> Findings { get; set; } = new List<Finding>();
+    public ICollection<PlaybookAmendment> Amendments { get; set; } = new List<PlaybookAmendment>();
 }

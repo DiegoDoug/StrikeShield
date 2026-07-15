@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using StrikeShield.Application.Ai;
 using StrikeShield.Application.Common;
+using StrikeShield.Infrastructure.Ai;
 using StrikeShield.Infrastructure.HealthChecks;
 using StrikeShield.Infrastructure.Persistence;
 
@@ -26,6 +28,23 @@ public static class DependencyInjection
         services
             .AddHealthChecks()
             .AddCheck<PostgresHealthCheck>("postgres");
+
+        services.Configure<AiOrchestrationOptions>(configuration.GetSection("AiOrchestration"));
+
+        // BYOK, same contract as Strix's LLM config (Phase 4): an empty key
+        // means the Correlator's escalation pass and the Adaptive Planner
+        // simply have nothing to run against, so NullLlmClient is
+        // registered instead of a real HTTP-calling client — every other
+        // feature keeps working without one.
+        var llmApiKey = configuration["AiOrchestration:LlmApiKey"];
+        if (string.IsNullOrWhiteSpace(llmApiKey))
+        {
+            services.AddSingleton<ILlmClient>(NullLlmClient.Instance);
+        }
+        else
+        {
+            services.AddHttpClient<ILlmClient, AnthropicLlmClient>();
+        }
 
         return services;
     }

@@ -21,14 +21,18 @@ public static class StepArgsBuilder
         new(@"\{assetsFile(?::(?<type>\w+))?\}", RegexOptions.Compiled);
 
     /// <summary>
-    /// Builds the container argv for one step. <paramref name="outputDir"/>
-    /// is the shared scan-output volume path — identical in this
-    /// (Orchestrator) process and the step container, so any asset-list
-    /// file written here is immediately visible to the tool by the same
-    /// absolute path, the same way "{output}" already works.
+    /// Builds the container argv for one step. <paramref name="argsTemplate"/>
+    /// is normally the step's own ArgsTemplate, but PlaybookExecutor passes
+    /// an Approved PlaybookAmendment's ProposedArgsTemplate instead when one
+    /// exists for this (ScanJob, step) pair (docs/PHASED_PLAN.md Phase 6) —
+    /// this method itself doesn't need to know which. <paramref
+    /// name="outputDir"/> is the shared scan-output volume path — identical
+    /// in this (Orchestrator) process and the step container, so any
+    /// asset-list file written here is immediately visible to the tool by
+    /// the same absolute path, the same way "{output}" already works.
     /// </summary>
     public static List<string> Build(
-        PlaybookStep step,
+        string argsTemplate,
         Target target,
         string outputDir,
         string containerOutputPath,
@@ -36,7 +40,7 @@ public static class StepArgsBuilder
         IReadOnlyList<Asset> upstreamAssets)
     {
         var template = AssetsFileTokenPattern.Replace(
-            step.ArgsTemplate,
+            argsTemplate,
             match => WriteAssetsFileAndGetPath(match, outputDir, upstreamAssets));
 
         return template

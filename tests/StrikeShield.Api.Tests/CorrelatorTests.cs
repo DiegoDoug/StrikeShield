@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using StrikeShield.Application.Ai;
 using StrikeShield.Application.Findings;
 using StrikeShield.Domain.Entities;
 using StrikeShield.Domain.Enums;
@@ -73,7 +75,7 @@ public class CorrelatorTests
         db.Findings.AddRange(nucleiFinding, zapFinding, unrelatedFinding);
         await db.SaveChangesAsync();
 
-        var correlator = new Correlator(db);
+        var correlator = new Correlator(db, NullLlmClient.Instance, NullLogger<Correlator>.Instance);
         var groupsCreated = await correlator.CorrelateAsync(scanJobId);
 
         Assert.Equal(1, groupsCreated);
@@ -120,7 +122,7 @@ public class CorrelatorTests
         db.Findings.AddRange(findingA, findingB);
         await db.SaveChangesAsync();
 
-        var correlator = new Correlator(db);
+        var correlator = new Correlator(db, NullLlmClient.Instance, NullLogger<Correlator>.Instance);
         var firstRunGroupsCreated = await correlator.CorrelateAsync(scanJobId);
         var groupIdAfterFirstRun = (await db.Findings.SingleAsync(f => f.Id == findingA.Id)).CorrelationGroupId;
 

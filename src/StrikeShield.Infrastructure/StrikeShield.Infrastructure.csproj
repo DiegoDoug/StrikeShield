@@ -25,6 +25,11 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <!-- AddHttpClient<TClient, TImplementation>() for AnthropicLlmClient
+         (docs/PHASED_PLAN.md Phase 6) — explicit reference rather than
+         relying on it being present in the Microsoft.AspNetCore.App shared
+         framework above. -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

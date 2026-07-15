@@ -20,7 +20,26 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 6: the AI orchestration layer — Correlator LLM-escalation +
+**Phase 7: AI-powered, audience-specific reporting.** `ReportGenerationService`
+(the Reporting Agent, `StrikeShield.Application.Reporting`) reuses Phase 6's
+`ILlmClient` — one structured-output call per report. Every
+quantitative/structural finding field (CVSS, CWE/CVE, repro steps, evidence,
+PoC, fix, verification steps) comes straight from the already-normalized
+`Finding`/`FindingEvidence` entities, never invented by the LLM; the call
+only supplies the two narrative fields those don't already carry
+(`businessImpact`/`riskRating`), framed per audience via a different system
+prompt for each of the 4 report types. The response is schema-validated —
+every finding must get both fields, or generation fails rather than
+shipping a partial report (`ReportGenerationServiceTests.cs`, via a fake
+`ILlmClient`). `ReportMarkdownBuilder` deterministically renders each
+type's Markdown (no LLM involved in rendering itself —
+`ReportMarkdownBuilderTests.cs`); `PlaywrightReportRenderer` converts that
+to HTML (Markdig) then PDF (headless Chromium via Playwright
+print-to-PDF) — the Api image now builds
+`FROM mcr.microsoft.com/playwright/dotnet:v1.47.0-jammy` for exactly that.
+`GET /api/engagements/{id}/reports/{type}` returns the rendered PDF.
+
+**Phase 6** (still active): the AI orchestration layer — Correlator LLM-escalation +
 Adaptive Planner.** `ILlmClient` is the one seam both extension points call
 through (`StrikeShield.Application.Ai`): `AnthropicLlmClient` (a plain HTTP
 call to Anthropic's Messages API) when `STRIKESHIELD_AI_LLM_API_KEY` is
@@ -326,6 +345,33 @@ target/severity but disagree on everything else) is proven deterministically
 with a fake `ILlmClient` in `tests/StrikeShield.Api.Tests/CorrelatorLlmEscalationTests.cs`
 — including that the LLM is never called for deterministic matches or with
 no key configured — rather than depending on a live model's output.
+
+### Phase 7 walkthrough (AI-powered reporting, via curl)
+
+Requires your own LLM API key — the same `STRIKESHIELD_AI_LLM_API_KEY` from
+the Phase 6 walkthrough above. Every other tool/phase works without this;
+the Reporting Agent specifically has no narrative content to write without
+an LLM.
+
+Continuing with the same `$AUTH`/`$ENGAGEMENT_ID` (from an engagement with
+at least one completed scan — e.g. the Phase 3 walkthrough's
+`full-baseline` run):
+
+```bash
+curl -s localhost:8085/api/engagements/$ENGAGEMENT_ID/reports/executive -o exec.pdf
+curl -s localhost:8085/api/engagements/$ENGAGEMENT_ID/reports/technical -o tech.pdf
+curl -s localhost:8085/api/engagements/$ENGAGEMENT_ID/reports/dev-remediation -o dev.pdf
+curl -s localhost:8085/api/engagements/$ENGAGEMENT_ID/reports/compliance -o compliance.pdf
+```
+
+Each call regenerates the report fresh (no caching) and returns the
+rendered PDF directly. If the engagement has no findings yet, or the LLM
+call fails/returns an incomplete response (missing a finding's
+`businessImpact`/`riskRating`), the endpoint returns `400` with a message
+explaining why rather than a partial PDF — proven with a fake `ILlmClient`
+in `tests/StrikeShield.Api.Tests/ReportGenerationServiceTests.cs`; the
+deterministic Markdown rendering itself (no LLM/Playwright involved) is
+proven in `ReportMarkdownBuilderTests.cs`.
 
 ## Solution layout
 

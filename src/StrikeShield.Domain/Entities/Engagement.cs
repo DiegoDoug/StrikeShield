@@ -28,6 +28,7 @@ public class Engagement
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<ScanJob> ScanJobs { get; set; } = new List<ScanJob>();
+    public ICollection<Report> Reports { get; set; } = new List<Report>();
 
     public bool IsApproved => ApprovedAt is not null && !string.IsNullOrWhiteSpace(ApprovedBy);
 

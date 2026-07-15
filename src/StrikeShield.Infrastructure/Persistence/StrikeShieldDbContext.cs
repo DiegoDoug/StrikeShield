@@ -27,6 +27,7 @@ public class StrikeShieldDbContext : DbContext, IAppDbContext
     public DbSet<Asset> Assets => Set<Asset>();
     public DbSet<CorrelationGroup> CorrelationGroups => Set<CorrelationGroup>();
     public DbSet<PlaybookAmendment> PlaybookAmendments => Set<PlaybookAmendment>();
+    public DbSet<Report> Reports => Set<Report>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

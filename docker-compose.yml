@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: strikeshield
       POSTGRES_PASSWORD: strikeshield
     ports:
-      - "5432:5432"
+      - "${STRIKESHIELD_POSTGRES_PORT:-5432}:5432"
     volumes:
       - strikeshield-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -14,32 +14,116 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - strikeshield-net
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${STRIKESHIELD_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - strikeshield-net
 
   api:
     build:
       context: .
       dockerfile: src/StrikeShield.Api/Dockerfile
     ports:
-      - "8080:8080"
+      - "${STRIKESHIELD_API_PORT:-8085}:8085"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_URLS: http://+:8085
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=strikeshield;Username=strikeshield;Password=strikeshield"
+      # Dev-only defaults below. Override via a local .env file (see
+      # .env.example) before running against anything but a throwaway
+      # local Postgres — see docs/PHASED_PLAN.md Phase 1.
+      Jwt__Key: "${STRIKESHIELD_JWT_KEY:-dev-only-signing-key-change-me-before-any-real-deployment-32chars+}"
+      SeedAdmin__Email: "${STRIKESHIELD_SEED_ADMIN_EMAIL:-admin@strikeshield.local}"
+      SeedAdmin__Password: "${STRIKESHIELD_SEED_ADMIN_PASSWORD:-ChangeMe123!}"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      # The Kestrel listener only binds after Program.cs's
+      # DbInitializer.MigrateAndSeedAsync completes (it runs before
+      # app.Run()), so proving the port is listening is enough to prove
+      # migrations are done. No curl/wget/bash guaranteed in the aspnet
+      # base image, so check for a LISTEN socket on port 8085 (0x1F95)
+      # directly via /proc/net/tcp{,6} — needs only grep. Must check both:
+      # ASPNETCORE_URLS="http://+:8085" makes Kestrel bind the IPv6
+      # wildcard ([::]), so the listening socket only shows up in tcp6.
+      test: ["CMD-SHELL", "grep -q ':1F95' /proc/net/tcp /proc/net/tcp6"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - strikeshield-net
+
+  # OWASP Juice Shop: the standing, intentionally-vulnerable safe test
+  # target for every phase from here on (docs/PHASED_PLAN.md Phase 2+).
+  # Only ever scan targets you own or are authorized to test — this one
+  # is explicitly built for exactly that purpose.
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "${STRIKESHIELD_JUICE_SHOP_PORT:-3000}:3000"
+    networks:
+      - strikeshield-net
+
+  # Docker-outside-of-Docker: mounts the host's Docker socket so it can
+  # launch one isolated container per playbook step (docs/ARCHITECTURE.md
+  # §5). Deliberately the ONLY service with that mount — never add it to
+  # the public-facing api service (docs/ARCHITECTURE.md §8).
+  orchestrator:
+    build:
+      context: .
+      dockerfile: src/StrikeShield.Orchestrator/Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=strikeshield;Username=strikeshield;Password=strikeshield"
+      Docker__Host: "unix:///var/run/docker.sock"
+      Orchestrator__NetworkName: strikeshield-net
+      Orchestrator__ScanOutputVolumeName: strikeshield-scan-output
+      Orchestrator__ScanOutputMountPath: /scan-output
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - strikeshield-scan-output:/scan-output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Not just for network dependency ordering: api's healthcheck only
+      # passes once Program.cs's migrate-and-seed step has completed
+      # (see api's healthcheck comment above), so this also guarantees the
+      # ScanJobs/Playbooks tables exist before this service's first poll —
+      # closing a race that otherwise self-heals on the next 5s poll but
+      # spams a PostgresException in the meantime.
+      api:
+        condition: service_healthy
+    networks:
+      - strikeshield-net
+
+networks:
+  strikeshield-net:
+    name: strikeshield-net
 
 volumes:
   strikeshield-postgres-data:
+    name: strikeshield-postgres-data
+  # Must be pinned to this exact bare name: the Orchestrator's dynamically-
+  # created step containers (via Docker.DotNet, not docker-compose) mount
+  # it by this literal name in Orchestrator__ScanOutputVolumeName. Without
+  # an explicit `name:` here, Compose would create it as
+  # "<project>_strikeshield-scan-output" instead — the Orchestrator's own
+  # compose-managed mount would resolve correctly, but Docker.DotNet's
+  # bare-name reference would silently auto-create a second, different,
+  # empty volume, and every step container would see an empty /scan-output
+  # missing whatever the Orchestrator wrote.
+  strikeshield-scan-output:
+    name: strikeshield-scan-output

@@ -20,11 +20,31 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 0 (this commit): repo bootstrap.** Clean Architecture solution
-skeleton (`Domain` / `Application` / `Infrastructure` / `Api`), Postgres +
-Redis via Docker Compose, a `/health` endpoint that actually verifies DB
-connectivity, and CI (build + test on every push). No business logic yet —
-that starts in Phase 1.
+**Phase 3: cross-tool finding normalization + correlation.** Nuclei (JSONL),
+a generic SARIF importer (ready for Strix/Semgrep/CodeQL/Trivy in later
+phases), OWASP ZAP (`-J` JSON), and nmap (`-oX` XML) all normalize into one
+`Finding` table via per-format adapters — see
+`src/StrikeShield.Application/Findings/Adapters/`. nmap's host/port output
+also becomes `Asset` rows. A seeded `full-baseline` playbook (Nuclei + ZAP
+baseline + nmap vuln scripts) exercises all three; `GET
+/api/scan-jobs/{id}/findings` returns them normalized, with a
+`Correlator` deterministically grouping findings that share an exact
+dedupe fingerprint (same normalized target/CWE-or-CVE/location) into one
+`CorrelationGroup` — proven by a fixture-based test
+(`tests/StrikeShield.Api.Tests/CorrelatorTests.cs`), not live-scan
+nondeterminism.
+
+**Phase 2** (still active): a separate `StrikeShield.Orchestrator` worker
+(own container, the only one with Docker socket access) polls for `Queued`
+ScanJobs and runs each playbook step as an isolated, resource-bounded
+container — no leftover containers whether the step succeeds, fails, or
+times out. OWASP Juice Shop is included as the standing safe test target.
+
+**Phase 1** (still active): Clients → Projects → Targets → Engagements,
+with a hard-enforced rule — no `ScanJob` can be created against an
+Engagement that isn't approved and currently inside its scope window
+(`docs/ARCHITECTURE.md` §4/§8) — plus JWT bearer auth (a single seeded
+admin user), EF Core + Postgres migrations, and CRUD for every entity.
 
 ## Quick start
 
@@ -40,7 +60,7 @@ docker compose up --build
 Then:
 
 ```bash
-curl -s http://localhost:8080/health | jq
+curl -s http://localhost:8085/health | jq
 # {
 #   "status": "Healthy",
 #   "checks": [{ "name": "postgres", "status": "Healthy", "description": "Postgres connection succeeded." }],
@@ -48,7 +68,19 @@ curl -s http://localhost:8080/health | jq
 # }
 ```
 
-Swagger UI: http://localhost:8080/swagger
+Swagger UI: http://localhost:8085/swagger
+
+> **Port already in use?** If `docker compose up` fails with
+> `Bind for 0.0.0.0:8085 failed: port is already allocated` (or the same for
+> 5432/6379), something else on your machine already has that port —
+> another project, a local Postgres/Redis install, or (on Windows) IIS
+> Express or a leftover container from a previous run. Either stop
+> whatever's holding it, or remap it: copy `.env.example` to `.env` and set
+> `STRIKESHIELD_API_PORT` / `STRIKESHIELD_POSTGRES_PORT` /
+> `STRIKESHIELD_REDIS_PORT` to a free port, then re-run
+> `docker compose up --build` (adjust the `localhost:8085` URLs above to
+> match). `docker ps -a` will show if a stray container from an earlier
+> attempt is still holding the port.
 
 To run tests locally (requires a reachable Postgres — either
 `docker compose up -d postgres` first, or point `ConnectionStrings__Postgres`
@@ -58,14 +90,109 @@ at one):
 dotnet test StrikeShield.sln
 ```
 
+### Phase 1 walkthrough (the scope-gate acceptance test, via curl)
+
+On first boot the API seeds one organization and one admin user
+(`admin@strikeshield.local` / `ChangeMe123!` by default — override via
+`.env`, see `.env.example`, before running this anywhere but local dev).
+
+```bash
+# 1. Log in and grab a token
+TOKEN=$(curl -s -X POST localhost:8085/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@strikeshield.local","password":"ChangeMe123!"}' | jq -r .token)
+AUTH="Authorization: Bearer $TOKEN"
+
+# 2. Get the seeded organization id
+ORG_ID=$(curl -s localhost:8085/api/organizations -H "$AUTH" | jq -r '.[0].id')
+
+# 3. Client -> Project -> Target -> Engagement (unapproved)
+CLIENT_ID=$(curl -s -X POST localhost:8085/api/clients -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"organizationId\":\"$ORG_ID\",\"name\":\"Acme Corp\"}" | jq -r .id)
+PROJECT_ID=$(curl -s -X POST localhost:8085/api/projects -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"clientId\":\"$CLIENT_ID\",\"name\":\"Q3 External Pentest\"}" | jq -r .id)
+TARGET_ID=$(curl -s -X POST localhost:8085/api/targets -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"http://juice-shop:3000\"}" | jq -r .id)
+ENGAGEMENT_ID=$(curl -s -X POST localhost:8085/api/engagements -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"projectId\":\"$PROJECT_ID\",\"name\":\"July Engagement\",\"scopeStart\":\"2026-01-01T00:00:00Z\",\"scopeEnd\":\"2027-01-01T00:00:00Z\"}" | jq -r .id)
+
+# 4. Scan-job request against the unapproved engagement -> expect 403
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
+# -> 403
+
+# 5. Approve the engagement
+curl -s -X POST "localhost:8085/api/engagements/$ENGAGEMENT_ID/approve" -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"approvedBy":"qa-lead@strikeshield.local"}'
+
+# 6. Same scan-job request again -> expect 202
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
+# -> 202
+```
+
+The same flow is asserted end-to-end in
+`tests/StrikeShield.Api.Tests/ScopeGateTests.cs`.
+
+### Phase 2 walkthrough (Nuclei actually runs, via curl)
+
+Continuing with the `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID` from above (target
+pointed at `http://juice-shop:3000`, engagement approved):
+
+```bash
+# 1. Launch the seeded nuclei-quick playbook
+SCAN_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}" | jq -r .id)
+
+# 2. Poll until Completed — the Orchestrator picks it up within ~5s and
+#    Nuclei's first run also fetches its template set, so this can take a
+#    couple of minutes the very first time.
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$SCAN_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. Raw Nuclei output (JSON-lines), once Completed
+curl -s localhost:8085/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH" | jq .
+
+# 4. Confirm no leftover step containers
+docker ps -a --filter "name=strikeshield-step"
+# -> empty
+```
+
+If a step comes back `Failed` instead of `Completed`, check
+`errorMessage`/`exitCode` in the steps response — the most likely local
+cause is Nuclei's first-run template download taking longer than the
+step's timeout (`PlaybookStep.TimeoutSeconds`, 300s by default) on a slow
+connection.
+
+### Phase 3 walkthrough (normalized findings across 3 tools, via curl)
+
+Continuing with the same `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID`:
+
+```bash
+# 1. Launch the seeded full-baseline playbook (Nuclei + ZAP baseline + nmap)
+BASELINE_JOB_ID=$(curl -s -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-baseline\"}" | jq -r .id)
+
+# 2. Poll until Completed — ZAP's baseline scan is the slow step (up to 900s)
+watch -n 5 "curl -s localhost:8085/api/scan-jobs/$BASELINE_JOB_ID -H \"$AUTH\" | jq .status"
+
+# 3. Normalized findings, one shape regardless of source tool
+curl -s localhost:8085/api/scan-jobs/$BASELINE_JOB_ID/findings -H "$AUTH" | jq '[.[] | {sourceTool, title, severity, cweIds}]'
+```
+
+Cross-tool correlation (grouping the same underlying issue found by two
+different tools into one `CorrelationGroup`) is proven deterministically
+with a known fixture in `tests/StrikeShield.Api.Tests/CorrelatorTests.cs`
+rather than depending on live Nuclei/ZAP output happening to overlap.
+
 ## Solution layout
 
 ```
 src/
-  StrikeShield.Domain/          entities & business rules (empty until Phase 1)
-  StrikeShield.Application/     use cases / orchestration services
-  StrikeShield.Infrastructure/  EF Core + Postgres, health checks, (later) Docker orchestration
-  StrikeShield.Api/             ASP.NET Core Web API host
+  StrikeShield.Domain/          entities, enums, and the scope-gate business rule
+  StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing), finding adapters + Correlator
+  StrikeShield.Infrastructure/  EF Core + Postgres, migrations, seeding, health checks
+  StrikeShield.Api/             ASP.NET Core Web API host, JWT wiring, endpoints
+  StrikeShield.Orchestrator/    Docker.DotNet worker: runs playbook steps as isolated containers
 tests/
   StrikeShield.Api.Tests/       integration tests (WebApplicationFactory)
 docs/
@@ -76,8 +203,12 @@ docs/
 ## Legal / scope
 
 StrikeShield launches active security tools (including an autonomous AI
-exploitation agent) against configured targets. Only ever point it at
-systems you own or are explicitly authorized to test. Phase 1 adds a
-hard-enforced scope/authorization gate — see `docs/ARCHITECTURE.md` §4 and
-§8 — but until that lands, this repo is scaffolding only and does not run
-any scans.
+exploitation agent, in a later phase) against configured targets. Only
+ever point it at systems you own or are explicitly authorized to test. The
+scope/authorization gate from Phase 1 (`docs/ARCHITECTURE.md` §4/§8)
+enforces this at the data-model level — no `ScanJob` can be created against
+an unapproved or out-of-window Engagement — and as of Phase 2 this repo
+does actively launch tools (currently Nuclei) in Docker containers, so that
+gate is now live, not theoretical. The bundled OWASP Juice Shop service is
+there specifically so you have a target you're authorized to scan without
+needing one of your own yet.

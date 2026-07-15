@@ -7,12 +7,20 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Needed as a plain class library (Sdk, not Sdk.Web) for
+         Microsoft.Extensions.Diagnostics.HealthChecks types (IHealthCheck,
+         HealthCheckResult, AddHealthChecks/AddCheck), which ship in the
+         ASP.NET Core shared framework rather than as standalone packages. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\StrikeShield.Domain\StrikeShield.Domain.csproj" />
     <ProjectReference Include="..\StrikeShield.Application\StrikeShield.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.4" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.8">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -51,3 +51,183 @@ jobs:
         with:
           name: test-results
           path: "**/*.trx"
+
+  compose-smoke-test:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the full stack
+        run: docker compose up --build -d
+
+      - name: Wait for API to report healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8085/health | grep -q '"status":"Healthy"'; then
+              echo "API is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy in time."
+          docker compose logs
+          exit 1
+
+      - name: Run Phase 1 + Phase 2 + Phase 3 acceptance flow
+        run: |
+          set -euo pipefail
+          # Juice Shop logs a full stack trace for every "unexpected path" a
+          # scanner probes, which drowns out everything else once Nuclei
+          # starts running. Tee this step's own output to a file and upload
+          # it as an artifact below so a failure is diagnosable without
+          # wading through that noise in `docker compose logs`.
+          exec > >(tee /tmp/acceptance-flow.log) 2>&1
+          BASE_URL=http://localhost:8085
+
+          TOKEN=$(curl -sf -X POST "$BASE_URL/api/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"admin@strikeshield.local","password":"ChangeMe123!"}' | jq -r .token)
+          AUTH="Authorization: Bearer $TOKEN"
+
+          ORG_ID=$(curl -sf "$BASE_URL/api/organizations" -H "$AUTH" | jq -r '.[0].id')
+
+          CLIENT_ID=$(curl -sf -X POST "$BASE_URL/api/clients" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"organizationId\":\"$ORG_ID\",\"name\":\"CI Client\"}" | jq -r .id)
+          PROJECT_ID=$(curl -sf -X POST "$BASE_URL/api/projects" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"clientId\":\"$CLIENT_ID\",\"name\":\"CI Project\"}" | jq -r .id)
+          TARGET_ID=$(curl -sf -X POST "$BASE_URL/api/targets" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"projectId\":\"$PROJECT_ID\",\"type\":\"Url\",\"value\":\"http://juice-shop:3000\"}" | jq -r .id)
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LATER=$(date -u -d "+7 days" +"%Y-%m-%dT%H:%M:%SZ")
+          ENGAGEMENT_ID=$(curl -sf -X POST "$BASE_URL/api/engagements" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"projectId\":\"$PROJECT_ID\",\"name\":\"CI Engagement\",\"rulesOfEngagement\":\"Standard rules of engagement.\",\"authorizationEvidenceUri\":\"https://example.test/authorization-letter.pdf\",\"scopeStart\":\"$NOW\",\"scopeEnd\":\"$LATER\",\"allowedScopeRules\":[\"juice-shop\"]}" | jq -r .id)
+
+          echo "Confirming the scope gate rejects an unapproved engagement..."
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/scan-jobs" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}")
+          if [ "$STATUS" != "403" ]; then
+            echo "Expected 403 for an unapproved engagement, got $STATUS"
+            exit 1
+          fi
+
+          curl -sf -X POST "$BASE_URL/api/engagements/$ENGAGEMENT_ID/approve" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d '{"approvedBy":"ci@strikeshield.local"}' > /dev/null
+
+          echo "Launching the nuclei-quick scan..."
+          SCAN_JOB_ID=$(curl -sf -X POST "$BASE_URL/api/scan-jobs" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}" | jq -r .id)
+
+          echo "Polling ScanJob $SCAN_JOB_ID until it reaches a terminal status..."
+          SCAN_STATUS="Queued"
+          for i in $(seq 1 90); do
+            SCAN_STATUS=$(curl -sf "$BASE_URL/api/scan-jobs/$SCAN_JOB_ID" -H "$AUTH" | jq -r .status)
+            echo "  [$i] status=$SCAN_STATUS"
+            case "$SCAN_STATUS" in
+              Completed|Failed|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+
+          echo "Steps/artifacts:"
+          STEPS_JSON=$(curl -sf "$BASE_URL/api/scan-jobs/$SCAN_JOB_ID/steps" -H "$AUTH")
+          echo "$STEPS_JSON" | jq .
+
+          if [ "$SCAN_STATUS" != "Completed" ]; then
+            echo "ScanJob did not reach Completed (status=$SCAN_STATUS). Orchestrator logs:"
+            docker compose logs orchestrator
+            exit 1
+          fi
+
+          ARTIFACT_COUNT=$(echo "$STEPS_JSON" | jq '[.[].artifacts[]] | length')
+          if [ "$ARTIFACT_COUNT" -lt 1 ]; then
+            echo "Expected at least one artifact from the completed step, found $ARTIFACT_COUNT."
+            exit 1
+          fi
+          echo "Found $ARTIFACT_COUNT artifact(s) — raw tool output is retrievable via the API."
+
+          echo "Launching the full-baseline scan (Nuclei + ZAP + nmap)..."
+          BASELINE_JOB_ID=$(curl -sf -X POST "$BASE_URL/api/scan-jobs" -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"full-baseline\"}" | jq -r .id)
+
+          echo "Polling ScanJob $BASELINE_JOB_ID until it reaches a terminal status (ZAP's baseline step is the slow one)..."
+          BASELINE_STATUS="Queued"
+          for i in $(seq 1 150); do
+            BASELINE_STATUS=$(curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID" -H "$AUTH" | jq -r .status)
+            echo "  [$i] status=$BASELINE_STATUS"
+            case "$BASELINE_STATUS" in
+              Completed|Failed|TimedOut) break ;;
+            esac
+            sleep 10
+          done
+
+          echo "Findings:"
+          FINDINGS_JSON=$(curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/findings" -H "$AUTH")
+          echo "$FINDINGS_JSON" | jq .
+
+          # Always dump each step's raw artifact content (unconditionally,
+          # not just on failure) — the only way to see exactly what ZAP/
+          # nmap actually wrote, to diagnose an adapter/schema mismatch
+          # versus a genuinely-empty scan result.
+          echo "Full-baseline steps (with raw artifact content):"
+          curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/steps" -H "$AUTH" | jq .
+
+          if [ "$BASELINE_STATUS" != "Completed" ]; then
+            echo "full-baseline ScanJob did not reach Completed (status=$BASELINE_STATUS). Steps:"
+            curl -sf "$BASE_URL/api/scan-jobs/$BASELINE_JOB_ID/steps" -H "$AUTH" | jq .
+            echo "Orchestrator logs:"
+            docker compose logs orchestrator
+            exit 1
+          fi
+
+          # Not a >=2-distinct-tools assertion on purpose: which tools
+          # report *anything* against a live, unauthenticated Juice Shop
+          # run is genuinely nondeterministic (Nuclei's template-match
+          # timing varies run to run; nmap only ever produces a Finding
+          # for a --script vuln hit naming a CVE, which Juice Shop's
+          # single Node http service was never going to trigger). The
+          # deterministic claim — that a normalized Finding is well-formed
+          # regardless of which tool produced it, and that overlapping
+          # findings collapse into one CorrelationGroup — is proven by the
+          # fixture-based test (CorrelatorTests.cs), per docs/PHASED_PLAN.md
+          # Phase 3's explicit acceptance criteria. This just confirms the
+          # live pipeline actually produced at least one normalized Finding.
+          FINDING_COUNT=$(echo "$FINDINGS_JSON" | jq 'length')
+          if [ "$FINDING_COUNT" -lt 1 ]; then
+            echo "Expected at least one normalized Finding from the full-baseline scan, found $FINDING_COUNT."
+            exit 1
+          fi
+          echo "Found $FINDING_COUNT normalized finding(s) — the cross-tool ingestion pipeline is live and working."
+
+      - name: Verify no leaked step containers
+        if: always()
+        run: |
+          LEFTOVER=$(docker ps -a --filter "name=strikeshield-step" -q)
+          if [ -n "$LEFTOVER" ]; then
+            echo "Leaked step containers found:"
+            docker ps -a --filter "name=strikeshield-step"
+            exit 1
+          fi
+          echo "No leaked step containers."
+
+      - name: Upload acceptance flow output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-flow-log
+          path: /tmp/acceptance-flow.log
+          if-no-files-found: ignore
+
+      - name: Show api/orchestrator/postgres logs on failure
+        if: failure()
+        # Deliberately excludes juice-shop: once Nuclei starts probing it,
+        # its catch-all error handler logs a full stack trace per
+        # unmatched path, which is expected scanner noise, not a failure
+        # signal, and drowns out the services we actually need to debug.
+        run: docker compose logs --tail=500 api orchestrator postgres
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

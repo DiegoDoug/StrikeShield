@@ -13,6 +13,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "StrikeShield.Api", "src\Str
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "StrikeShield.Api.Tests", "tests\StrikeShield.Api.Tests\StrikeShield.Api.Tests.csproj", "{778D09C8-8FAC-4CAF-9E05-63E7DBBA8A6C}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "StrikeShield.Orchestrator", "src\StrikeShield.Orchestrator\StrikeShield.Orchestrator.csproj", "{5DC03D79-DAAC-42C1-9272-E1FECAE349BF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +41,10 @@ Global
 		{778D09C8-8FAC-4CAF-9E05-63E7DBBA8A6C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{778D09C8-8FAC-4CAF-9E05-63E7DBBA8A6C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{778D09C8-8FAC-4CAF-9E05-63E7DBBA8A6C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5DC03D79-DAAC-42C1-9272-E1FECAE349BF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5DC03D79-DAAC-42C1-9272-E1FECAE349BF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5DC03D79-DAAC-42C1-9272-E1FECAE349BF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5DC03D79-DAAC-42C1-9272-E1FECAE349BF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

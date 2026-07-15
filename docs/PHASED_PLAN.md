@@ -12,8 +12,8 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phase 0 implemented in this session** (see repo root). Phases 1+
-are specified below, ready to build next.
+Status: **Phases 0, 1, 2, and 3 implemented** (see repo root). Phase 4+ are
+specified below, ready to build next.
 
 ---
 
@@ -35,7 +35,7 @@ Compose + CI) works end to end before any business logic exists.
 ```bash
 git pull origin claude/pentesting-orchestration-platform-0xzgjs
 docker compose up --build
-curl -s http://localhost:8080/health | jq
+curl -s http://localhost:8085/health | jq
 # expect: {"status":"Healthy", "checks":[{"name":"postgres","status":"Healthy"}]}
 ```
 **Acceptance:** container stack comes up clean, `/health` returns `Healthy`,
@@ -43,67 +43,96 @@ curl -s http://localhost:8080/health | jq
 
 ---
 
-## Phase 1 — Core domain: Clients, Projects, Targets, Engagements, scope gate
+## Phase 1 — Core domain: Clients, Projects, Targets, Engagements, scope gate ✅
 
 **Goal:** The non-negotiable authorization/scope model from
 `ARCHITECTURE.md` §4, plus basic CRUD, before any scanning exists.
 
 **Deliverables:**
-- EF Core entities + migrations: `Organization`, `User`, `Client`,
+- EF Core entities + migrations: `Organization`, `AppUser`, `Client`,
   `Project`, `Target`, `Engagement` (with `authorizationEvidenceUri`,
-  `approvedBy/At`, `scopeStart/End`, `allowedScopeRules`).
-- REST endpoints: CRUD for all of the above.
+  `approvedBy/At`, `scopeStart/End`, `allowedScopeRules`), `ScanJob`.
+- REST endpoints: CRUD for clients/projects/targets, create+approve for
+  engagements, create+read for scan-jobs, a read-only organizations list.
 - Domain rule: creating a `ScanJob` (stubbed in this phase — real execution
-  is Phase 2) against a `Target` whose `Engagement` isn't approved/in-window
-  returns `403` with a clear reason, enforced in the Application layer, unit
-  tested.
-- JWT-based auth (ASP.NET Identity) with a single seeded admin user — full
-  RBAC comes later (Phase 10).
+  is Phase 2) against an `Engagement` that isn't approved/in-window returns
+  `403` with a clear reason (`Engagement.CheckAuthorizedForScan`, enforced in
+  `ScanJobService`), unit/integration tested.
+- JWT bearer auth (`Microsoft.Extensions.Identity.Core`'s `PasswordHasher`
+  + hand-issued JWTs) with a single seeded admin user — full RBAC and the
+  EF Identity membership system come later (Phase 10).
 
 **Test it:**
 ```bash
 docker compose up --build
-# via Swagger/curl:
-# 1. create client -> project -> target -> engagement (unapproved)
-# 2. POST /api/scan-jobs against that target -> expect 403 "engagement not authorized"
+# See README.md "Phase 1 walkthrough" for the full curl sequence:
+# 1. login, create client -> project -> target -> engagement (unapproved)
+# 2. POST /api/scan-jobs against it -> expect 403
 # 3. approve the engagement -> retry -> expect 202
 ```
-**Acceptance:** integration test suite (`WebApplicationFactory`) covers the
-happy path and the scope-gate rejection; both provable via curl too.
+**Acceptance:** `tests/StrikeShield.Api.Tests/ScopeGateTests.cs` (an
+integration test using `WebApplicationFactory`) covers the happy path and
+the scope-gate rejection end to end; the same flow is provable via curl
+(README.md).
 
 ---
 
-## Phase 2 — Scan orchestrator + first real tool (Nuclei) against a safe target
+## Phase 2 — Scan orchestrator + first real tool (Nuclei) against a safe target ✅
 
 **Goal:** Prove the Docker-orchestration primitive end to end with the
 simplest tool before adding Strix or multi-step DAGs.
 
 **Deliverables:**
-- `StrikeShield.Orchestrator` worker service using `Docker.DotNet`.
-- Add `juice-shop` (OWASP Juice Shop, intentionally vulnerable) as a compose
-  service — this becomes the standing safe test target for every phase from
-  here on.
-- `Playbook`/`PlaybookStep`/`ScanJob`/`StepRun` entities (single-step
-  playbooks only in this phase: "Nuclei quick scan").
-- Orchestrator launches a pinned `projectdiscovery/nuclei` container against
-  `http://juice-shop:3000`, with per-step timeout + resource limits, output
-  bind-mounted, container removed after collection.
-- Scan status endpoint (`Queued → Running → Completed/Failed/TimedOut`).
+- `StrikeShield.Orchestrator`: a separate worker service (own project,
+  own container, own Dockerfile) using `Docker.DotNet` — deliberately not
+  merged into the Api process, since it's the only component that mounts
+  the Docker socket (docs/ARCHITECTURE.md §5/§8).
+- `juice-shop` (OWASP Juice Shop) added as a compose service — the standing
+  safe test target for every phase from here on.
+- `Playbook`/`PlaybookStep`/`ScanJob`/`StepRun`/`Artifact` entities. `ScanJob`
+  now references a real `Playbook` (by slug, e.g. `"nuclei-quick"`) instead
+  of a free-text name. A single-step "nuclei-quick" playbook is seeded on
+  first boot.
+- The Orchestrator polls for `Queued` ScanJobs, and for each step launches a
+  pinned `projectdiscovery/nuclei` container attached to the shared
+  `strikeshield-net` network (so it can resolve `juice-shop`), bounded by
+  the step's configured memory/CPU/timeout, with output written to a
+  Docker volume (`strikeshield-scan-output`) shared with the Orchestrator's
+  own filesystem view — collected into an `Artifact` row and the container
+  removed immediately after, whether it succeeded, failed, or timed out.
+- `GET /api/scan-jobs/{id}/steps` exposes each step's status and artifacts
+  (`Queued → Running → Completed/Failed/TimedOut` at both the ScanJob and
+  StepRun level).
+
+> **Schema change note:** this phase changes the ScanJobs table (drops
+> `PlaybookName`, adds a required `PlaybookId` FK). If you already ran
+> Phase 1 locally, drop your Postgres volume first: `docker compose down -v`.
 
 **Test it:**
 ```bash
+docker compose down -v   # only needed if you ran Phase 1 before this
 docker compose up --build
-curl -X POST localhost:8080/api/scan-jobs -d '{"targetId":"...","playbook":"nuclei-quick"}'
-curl localhost:8080/api/scan-jobs/{id}   # poll until Completed
-docker ps -a | grep strikeshield-step    # expect: nothing left running/lingering
+
+# 1. Log in, create client -> project -> target (juice-shop) -> engagement,
+#    approve it (see README.md Phase 1 walkthrough for the exact curl calls).
+# 2. Launch the seeded playbook against the target:
+curl -X POST localhost:8085/api/scan-jobs -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\"}"
+# 3. Poll until Completed (the Orchestrator picks it up within ~5s):
+curl localhost:8085/api/scan-jobs/$SCAN_JOB_ID -H "$AUTH"
+# 4. Raw Nuclei output, once Completed:
+curl localhost:8085/api/scan-jobs/$SCAN_JOB_ID/steps -H "$AUTH"
+# 5. No leaked containers:
+docker ps -a --filter "name=strikeshield-step"   # expect: empty
 ```
-**Acceptance:** scan reaches `Completed`, raw Nuclei JSON artifact is
-retrievable via API, and `docker ps -a` shows no leaked containers/networks
-after completion.
+**Acceptance:** the ScanJob reaches `Completed` (or `Failed`/`TimedOut` if
+Nuclei itself errors — check the step's `errorMessage`), the raw Nuclei
+JSON-lines output is retrievable via `GET /api/scan-jobs/{id}/steps`, and
+`docker ps -a` shows no `strikeshield-step-*` containers left behind.
 
 ---
 
-## Phase 3 — Normalization layer + SARIF + 3 more tools
+## Phase 3 — Normalization layer + SARIF + 3 more tools ✅
 
 **Goal:** Unified `Finding`/`Asset` model, proving the "normalize everything"
 promise with tools that have genuinely different native formats.
@@ -123,7 +152,7 @@ promise with tools that have genuinely different native formats.
 ```bash
 docker compose up --build
 # run playbook "nuclei+zap+nmap" against juice-shop
-curl localhost:8080/api/scan-jobs/{id}/findings | jq 'length, .[0]'
+curl localhost:8085/api/scan-jobs/{id}/findings | jq 'length, .[0]'
 ```
 **Acceptance:** findings from all 3 tools appear in one `Finding` table with
 populated `severity`/`cweIds` where the source tool provides them; a finding
@@ -153,7 +182,7 @@ overlapping sample output, not by relying on live-scan nondeterminism).
 export LLM_API_KEY=... # your own key
 docker compose up --build
 # run playbook "strix-quick" against juice-shop with max_budget_usd=1.00
-curl localhost:8080/api/scan-jobs/{id}/findings | jq '[.[] | select(.sourceTool=="strix")]'
+curl localhost:8085/api/scan-jobs/{id}/findings | jq '[.[] | select(.sourceTool=="strix")]'
 ```
 **Acceptance:** Strix findings appear with `cvssScore`, `cweIds`, and PoC
 populated; the run stops at/under the configured budget (visible in
@@ -181,8 +210,8 @@ multiple tools" promise, not just "run tools in parallel."
 ```bash
 docker compose up --build
 # run "full-external-recon" against a scoped local multi-subdomain test target
-curl localhost:8080/api/scan-jobs/{id}/steps   # expect ordered step graph w/ per-step status
-curl localhost:8080/api/scan-jobs/{id}/assets  # expect subdomains/urls discovered by early steps
+curl localhost:8085/api/scan-jobs/{id}/steps   # expect ordered step graph w/ per-step status
+curl localhost:8085/api/scan-jobs/{id}/assets  # expect subdomains/urls discovered by early steps
 ```
 **Acceptance:** step graph executes in dependency order (visible via
 step-run timestamps), and at least one downstream step's actual container
@@ -212,7 +241,7 @@ docker compose up --build
 # seed a fixture set of 3 overlapping findings from different tools
 dotnet test --filter Correlator
 # run a recon-only playbook against juice-shop, expect a pending amendment
-curl localhost:8080/api/scan-jobs/{id}/amendments
+curl localhost:8085/api/scan-jobs/{id}/amendments
 ```
 **Acceptance:** fixture test shows overlapping findings collapse to one
 `CorrelationGroup` with combined evidence; a live recon run produces a
@@ -237,10 +266,10 @@ the playbook.
 **Test it:**
 ```bash
 docker compose up --build
-curl localhost:8080/api/engagements/{id}/reports/executive -o exec.pdf
-curl localhost:8080/api/engagements/{id}/reports/technical -o tech.pdf
-curl localhost:8080/api/engagements/{id}/reports/dev-remediation -o dev.pdf
-curl localhost:8080/api/engagements/{id}/reports/compliance -o compliance.pdf
+curl localhost:8085/api/engagements/{id}/reports/executive -o exec.pdf
+curl localhost:8085/api/engagements/{id}/reports/technical -o tech.pdf
+curl localhost:8085/api/engagements/{id}/reports/dev-remediation -o dev.pdf
+curl localhost:8085/api/engagements/{id}/reports/compliance -o compliance.pdf
 ```
 **Acceptance:** all 4 PDFs generate from one completed engagement; an
 automated schema-validation test asserts every finding in the technical

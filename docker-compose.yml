@@ -45,6 +45,14 @@ services:
       Jwt__Key: "${STRIKESHIELD_JWT_KEY:-dev-only-signing-key-change-me-before-any-real-deployment-32chars+}"
       SeedAdmin__Email: "${STRIKESHIELD_SEED_ADMIN_EMAIL:-admin@strikeshield.local}"
       SeedAdmin__Password: "${STRIKESHIELD_SEED_ADMIN_PASSWORD:-ChangeMe123!}"
+      # BYOK for the Reporting Agent (docs/PHASED_PLAN.md Phase 7) — the
+      # same key/model as the Correlator's LLM-escalation pass and the
+      # Adaptive Planner (Phase 6), since report generation runs in this
+      # (Api) process rather than the Orchestrator. Empty by default;
+      # GET .../reports/{type} returns 400 without it (there's no
+      # meaningful report to generate with no LLM to write the narrative).
+      AiOrchestration__LlmModel: "${STRIKESHIELD_AI_LLM_MODEL:-claude-sonnet-4-6}"
+      AiOrchestration__LlmApiKey: "${STRIKESHIELD_AI_LLM_API_KEY:-}"
     depends_on:
       postgres:
         condition: service_healthy

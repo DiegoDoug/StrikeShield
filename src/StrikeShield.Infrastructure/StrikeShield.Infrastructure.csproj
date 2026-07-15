@@ -30,6 +30,13 @@
          relying on it being present in the Microsoft.AspNetCore.App shared
          framework above. -->
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <!-- Markdown -> HTML -> PDF render pipeline (docs/PHASED_PLAN.md Phase
+         7): Markdig converts the Reporting Agent's Markdown to HTML;
+         Microsoft.Playwright drives headless Chromium's print-to-PDF.
+         Requires a matching Playwright browser install in the Api image's
+         runtime stage — see src/StrikeShield.Api/Dockerfile. -->
+    <PackageReference Include="Markdig" Version="0.37.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.47.0" />
   </ItemGroup>
 
 </Project>

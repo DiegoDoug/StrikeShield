@@ -12,7 +12,7 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phases 0-6 implemented** (see repo root). Phase 7+ are
+Status: **Phases 0-7 implemented** (see repo root). Phase 8+ are
 specified below, ready to build next.
 
 ---
@@ -347,22 +347,45 @@ live end-to-end pause/resume needs a real LLM key, same as Strix).
 
 ---
 
-## Phase 7 — AI-powered, audience-specific reporting
+## Phase 7 — AI-powered, audience-specific reporting ✅
 
 **Goal:** The reporting feature list from your prompt, verbatim.
 
 **Deliverables:**
-- Reporting Agent service: structured-output LLM calls (JSON
-  schema-constrained) producing the 4 report types from
-  `ARCHITECTURE.md` §7, each with every required per-finding field (business
-  impact, risk rating, CVSS, repro steps, screenshot refs, PoC, fix,
-  verification steps).
-- Markdown → HTML → PDF render pipeline (Playwright print-to-PDF).
-- `GET /api/engagements/{id}/reports/{type}` returning the rendered artifact.
+- `ReportGenerationService` (the Reporting Agent, `StrikeShield.Application.Reporting`):
+  one structured-output LLM call per report, reusing Phase 6's `ILlmClient`
+  (same BYOK key/model — `AiOrchestration:LlmApiKey`). Every
+  quantitative/structural finding field (CVSS, CWE/CVE, repro steps,
+  evidence, PoC, fix, verification steps) is sourced directly from the
+  already-normalized `Finding`/`FindingEvidence` entities, never invented
+  by the LLM — the call only supplies the two narrative fields those don't
+  already carry (`businessImpact`/`riskRating`), framed per audience via a
+  different system prompt for each of the 4 types from `ARCHITECTURE.md`
+  §7. The response is schema-validated (every finding must get both
+  fields) before anything renders — an incomplete LLM response throws
+  rather than shipping a partial report.
+- `ReportMarkdownBuilder`: deterministic (no LLM) Markdown rendering per
+  report type — Executive (grouped by severity, no jargon/CVSS/PoC),
+  Technical (full detail), Developer Remediation (grouped by affected
+  asset/component), Compliance (OWASP/CWE matrix + MITRE ATT&CK coverage
+  table).
+- `PlaywrightReportRenderer`: Markdown → HTML (Markdig) → PDF (headless
+  Chromium via Playwright print-to-PDF). The Api image's runtime stage now
+  builds `FROM mcr.microsoft.com/playwright/dotnet:v1.47.0-jammy` (Chromium
+  pre-installed, version-matched to the `Microsoft.Playwright` NuGet
+  package) instead of the plain aspnet runtime image.
+- `GET /api/engagements/{id}/reports/{type}` returning the rendered PDF —
+  `type` is one of `executive|technical|dev-remediation|compliance`.
+  Regenerates (and persists a new `Report` row) on every call rather than
+  caching.
 
 **Test it:**
 ```bash
 docker compose up --build
+# copy .env.example to .env and set STRIKESHIELD_AI_LLM_API_KEY first —
+# reporting reuses Phase 6's BYOK key; every other feature/phase works
+# without this, the Reporting Agent specifically has nothing to write
+# narrative content with otherwise
 curl localhost:8085/api/engagements/{id}/reports/executive -o exec.pdf
 curl localhost:8085/api/engagements/{id}/reports/technical -o tech.pdf
 curl localhost:8085/api/engagements/{id}/reports/dev-remediation -o dev.pdf
@@ -370,8 +393,11 @@ curl localhost:8085/api/engagements/{id}/reports/compliance -o compliance.pdf
 ```
 **Acceptance:** all 4 PDFs generate from one completed engagement; an
 automated schema-validation test asserts every finding in the technical
-report contains all required fields (fails the build if the LLM response
-was incomplete, rather than shipping a partial report).
+report contains all required fields (`ReportMarkdownBuilderTests.cs`), and
+that report generation fails rather than shipping a partial report when
+the LLM's response omits a finding's `businessImpact`/`riskRating`
+(`ReportGenerationServiceTests.cs`, via a fake `ILlmClient` — not a live
+call, same as Phase 6's fixture tests).
 
 ---
 

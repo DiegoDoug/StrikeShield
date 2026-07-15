@@ -7,6 +7,7 @@ using StrikeShield.Application.Findings.Adapters;
 using StrikeShield.Application.Organizations;
 using StrikeShield.Application.Playbooks;
 using StrikeShield.Application.Projects;
+using StrikeShield.Application.Reporting;
 using StrikeShield.Application.ScanJobs;
 using StrikeShield.Application.Targets;
 
@@ -41,6 +42,8 @@ public static class DependencyInjection
         services.AddScoped<IFindingIngestionService, FindingIngestionService>();
         services.AddScoped<ICorrelator, Correlator>();
         services.AddScoped<IFindingService, FindingService>();
+
+        services.AddScoped<IReportGenerationService, ReportGenerationService>();
 
         return services;
     }

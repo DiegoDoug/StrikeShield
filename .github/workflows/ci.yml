@@ -259,6 +259,27 @@ jobs:
           fi
           echo "full-external-recon playbook confirmed seeded with its DAG edges intact."
 
+          # Phase 7 (AI-powered reporting): deliberately no live LLM/
+          # Playwright call here — reporting needs the same real BYOK key
+          # as Phase 6, which CI doesn't have. What's unit-tested
+          # deterministically in the build-and-test job
+          # (ReportMarkdownBuilderTests.cs, no LLM/Playwright at all;
+          # ReportGenerationServiceTests.cs, via a fake ILlmClient/
+          # IReportRenderer) is the per-finding schema-completeness
+          # validation and the Markdown rendering itself. What CI *can*
+          # verify live: with no AiOrchestration:LlmApiKey configured, the
+          # reports endpoint is reachable and fails cleanly (400) rather
+          # than hanging or 500ing.
+          echo "Confirming the reports endpoint fails cleanly with no AI key configured..."
+          REPORT_STATUS=$(curl -s -o /tmp/report-response.json -w '%{http_code}' \
+            "$BASE_URL/api/engagements/$ENGAGEMENT_ID/reports/executive" -H "$AUTH")
+          cat /tmp/report-response.json
+          if [ "$REPORT_STATUS" != "400" ]; then
+            echo "Expected 400 from the reports endpoint with no AI key configured, got $REPORT_STATUS."
+            exit 1
+          fi
+          echo "Reports endpoint confirmed reachable and fails cleanly without a key — set a real AiOrchestration:LlmApiKey to generate real PDFs (see README.md)."
+
       - name: Verify no leaked step containers
         if: always()
         run: |

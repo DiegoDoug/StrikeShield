@@ -4,9 +4,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using StrikeShield.Application.Ai;
 using StrikeShield.Application.Common;
+using StrikeShield.Application.Reporting;
 using StrikeShield.Infrastructure.Ai;
 using StrikeShield.Infrastructure.HealthChecks;
 using StrikeShield.Infrastructure.Persistence;
+using StrikeShield.Infrastructure.Reporting;
 
 namespace StrikeShield.Infrastructure;
 
@@ -45,6 +47,8 @@ public static class DependencyInjection
         {
             services.AddHttpClient<ILlmClient, AnthropicLlmClient>();
         }
+
+        services.AddScoped<IReportRenderer, PlaywrightReportRenderer>();
 
         return services;
     }

@@ -53,6 +53,7 @@ services:
       # meaningful report to generate with no LLM to write the narrative).
       AiOrchestration__LlmModel: "${STRIKESHIELD_AI_LLM_MODEL:-claude-sonnet-4-6}"
       AiOrchestration__LlmApiKey: "${STRIKESHIELD_AI_LLM_API_KEY:-}"
+      AiOrchestration__LlmProvider: "${STRIKESHIELD_AI_LLM_PROVIDER:-anthropic}"
       # The frontend (docs/PHASED_PLAN.md Phase 9) is same-origin through
       # its own nginx proxy (see frontend/nginx.conf), so this only matters
       # if something hits the Api directly from a browser on a different
@@ -153,6 +154,7 @@ services:
       # deterministic Correlator pass and every other tool still work).
       AiOrchestration__LlmModel: "${STRIKESHIELD_AI_LLM_MODEL:-claude-sonnet-4-6}"
       AiOrchestration__LlmApiKey: "${STRIKESHIELD_AI_LLM_API_KEY:-}"
+      AiOrchestration__LlmProvider: "${STRIKESHIELD_AI_LLM_PROVIDER:-anthropic}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - strikeshield-scan-output:/scan-output

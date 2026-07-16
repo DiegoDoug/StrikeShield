@@ -85,9 +85,11 @@ print-to-PDF) — the Api image now builds
 **Phase 6** (still active): the AI orchestration layer — Correlator LLM-escalation +
 Adaptive Planner.** `ILlmClient` is the one seam both extension points call
 through (`StrikeShield.Application.Ai`): `AnthropicLlmClient` (a plain HTTP
-call to Anthropic's Messages API) when `STRIKESHIELD_AI_LLM_API_KEY` is
-set, `NullLlmClient` otherwise — the same "nothing to run against without
-a key" contract Strix has. The Correlator's deterministic exact-fingerprint
+call to Anthropic's Messages API, the default) or `DeepSeekLlmClient` (DeepSeek's
+OpenAI-compatible chat-completions API) when `STRIKESHIELD_AI_LLM_API_KEY` is
+set — `STRIKESHIELD_AI_LLM_PROVIDER` picks which (`anthropic`/`deepseek`,
+see `.env.example`) — `NullLlmClient` otherwise, the same "nothing to run
+against without a key" contract Strix has. The Correlator's deterministic exact-fingerprint
 pass is unchanged; a new escalation pass sends ambiguous cross-tool
 clusters (same target/severity, no shared fingerprint) **one batched LLM
 call each** for a merge/no-merge + confidence judgment, and never touches

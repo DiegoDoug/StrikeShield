@@ -13,4 +13,11 @@ public class AiOrchestrationOptions
 {
     public string LlmModel { get; set; } = "claude-sonnet-4-6";
     public string LlmApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Which ILlmClient implementation to register — "anthropic" (default)
+    /// or "deepseek". Case-insensitive; anything else falls back to
+    /// Anthropic. See Infrastructure.DependencyInjection.
+    /// </summary>
+    public string LlmProvider { get; set; } = "anthropic";
 }

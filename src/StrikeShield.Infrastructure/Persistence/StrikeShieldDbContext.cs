@@ -28,6 +28,8 @@ public class StrikeShieldDbContext : DbContext, IAppDbContext
     public DbSet<CorrelationGroup> CorrelationGroups => Set<CorrelationGroup>();
     public DbSet<PlaybookAmendment> PlaybookAmendments => Set<PlaybookAmendment>();
     public DbSet<Report> Reports => Set<Report>();
+    public DbSet<ScanSchedule> ScanSchedules => Set<ScanSchedule>();
+    public DbSet<Integration> Integrations => Set<Integration>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

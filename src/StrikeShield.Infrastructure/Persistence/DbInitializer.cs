@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using StrikeShield.Application.Auth;
+using StrikeShield.Application.Scheduling;
 using StrikeShield.Domain.Entities;
 using StrikeShield.Domain.Enums;
 
@@ -66,6 +67,7 @@ public static class DbInitializer
             await SeedFullBaselinePlaybookAsync(dbContext, logger);
             await SeedStrixQuickPlaybookAsync(dbContext, logger);
             await SeedFullExternalReconPlaybookAsync(dbContext, logger);
+            await SyncScanSchedulesAsync(dbContext, provider, logger);
         }
         finally
         {
@@ -405,5 +407,30 @@ public static class DbInitializer
         await dbContext.SaveChangesAsync();
 
         logger.LogInformation("Seeded playbook '{Slug}'.", FullExternalReconPlaybookSlug);
+    }
+
+    /// <summary>
+    /// Re-registers every enabled ScanSchedule's recurring job on startup
+    /// (docs/PHASED_PLAN.md Phase 8). Hangfire recurring jobs are
+    /// themselves persisted in its own Postgres storage, so this is
+    /// normally a no-op restoring the same state — it only matters if that
+    /// storage was ever reset independently of the ScanSchedules table
+    /// (e.g. a restore that didn't cover both). AddOrUpdate is idempotent,
+    /// so re-running this on every boot is cheap and safe.
+    /// </summary>
+    private static async Task SyncScanSchedulesAsync(StrikeShieldDbContext dbContext, IServiceProvider provider, ILogger logger)
+    {
+        var registrar = provider.GetRequiredService<IScanScheduleRegistrar>();
+
+        var schedules = await dbContext.ScanSchedules.Where(s => s.Enabled).ToListAsync();
+        foreach (var schedule in schedules)
+        {
+            registrar.Register(schedule);
+        }
+
+        if (schedules.Count > 0)
+        {
+            logger.LogInformation("Re-registered {Count} enabled ScanSchedule recurring job(s).", schedules.Count);
+        }
     }
 }

@@ -17,6 +17,11 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.8" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+    <!-- Cron-based recurring ScanJobs + the (auth-gated) Hangfire dashboard
+         (docs/PHASED_PLAN.md Phase 8). Postgres-backed storage — no new
+         infra dependency, reuses the same Postgres instance as EF Core. -->
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.14" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="1.20.10" />
   </ItemGroup>
 
 </Project>

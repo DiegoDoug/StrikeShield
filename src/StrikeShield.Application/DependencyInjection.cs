@@ -4,11 +4,14 @@ using StrikeShield.Application.Clients;
 using StrikeShield.Application.Engagements;
 using StrikeShield.Application.Findings;
 using StrikeShield.Application.Findings.Adapters;
+using StrikeShield.Application.Integrations;
+using StrikeShield.Application.Notifications;
 using StrikeShield.Application.Organizations;
 using StrikeShield.Application.Playbooks;
 using StrikeShield.Application.Projects;
 using StrikeShield.Application.Reporting;
 using StrikeShield.Application.ScanJobs;
+using StrikeShield.Application.Scheduling;
 using StrikeShield.Application.Targets;
 
 namespace StrikeShield.Application;
@@ -44,6 +47,10 @@ public static class DependencyInjection
         services.AddScoped<IFindingService, FindingService>();
 
         services.AddScoped<IReportGenerationService, ReportGenerationService>();
+
+        services.AddScoped<IScanScheduleService, ScanScheduleService>();
+        services.AddScoped<IIntegrationService, IntegrationService>();
+        services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
 
         return services;
     }

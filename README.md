@@ -20,7 +20,28 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
-**Phase 7: AI-powered, audience-specific reporting.** `ReportGenerationService`
+**Phase 8: scheduling & integrations.** Hangfire (Postgres-backed storage,
+no new infra dependency) adds cron-based recurring `ScanJob`s per
+`Engagement` — `ScanScheduleService.FireAsync` re-checks the Phase 1 scope/
+approval gate (`Engagement.CheckAuthorizedForScan`) on *every* fire, not
+just at schedule-creation time, so an engagement that's expired or was
+never approved makes the schedule skip (and record why) on its own instead
+of silently re-running forever. `IScanScheduleRegistrar` is the seam
+(`StrikeShield.Application.Scheduling`) — `HangfireScanScheduleRegistrar`
+in Infrastructure is the only piece that actually touches Hangfire, and it
+validates the cron expression synchronously before anything is persisted.
+A new `NotificationDispatcher` (`StrikeShield.Application.Notifications`)
+fans a completed `ScanJob` out to every enabled `Integration` configured on
+its Organization (`docs/ARCHITECTURE.md` §4: "Integration ── Organization")
+— Slack and a generic webhook fire on scan completion and on new critical
+findings; GitHub issue creation (one issue per critical finding) is the
+optional third channel, tied to critical findings only. Delivery failures
+are logged and swallowed per-integration — they can never fail the
+`ScanJob` that triggered them. The Hangfire dashboard is mounted at
+`/hangfire`, gated behind the same JWT bearer auth as every other endpoint
+(`JwtAuthenticatedDashboardAuthorizationFilter`).
+
+**Phase 7** (still active): AI-powered, audience-specific reporting. `ReportGenerationService`
 (the Reporting Agent, `StrikeShield.Application.Reporting`) reuses Phase 6's
 `ILlmClient` — one structured-output call per report. Every
 quantitative/structural finding field (CVSS, CWE/CVE, repro steps, evidence,
@@ -373,13 +394,58 @@ in `tests/StrikeShield.Api.Tests/ReportGenerationServiceTests.cs`; the
 deterministic Markdown rendering itself (no LLM/Playwright involved) is
 proven in `ReportMarkdownBuilderTests.cs`.
 
+### Phase 8 walkthrough (scheduling + notifications, via curl)
+
+Continuing with the same `$AUTH`/`$ENGAGEMENT_ID`/`$TARGET_ID` from the
+Phase 1 walkthrough above (the engagement must be approved and in-window —
+the same scope gate `ScanJob`s go through).
+
+```bash
+# 1. Schedule the seeded nuclei-quick playbook every 5 minutes (test cadence only)
+SCHEDULE_ID=$(curl -s -X POST localhost:8085/api/scan-schedules -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"engagementId\":\"$ENGAGEMENT_ID\",\"targetId\":\"$TARGET_ID\",\"playbookName\":\"nuclei-quick\",\"cronExpression\":\"*/5 * * * *\",\"createdBy\":\"you@example.com\"}" \
+  | jq -r .id)
+
+# 2. Watch it fire — either wait for the cron cadence, or trigger it once
+#    immediately from the (auth-gated) Hangfire dashboard's "Recurring Jobs"
+#    tab at http://localhost:8085/hangfire (log in with the same bearer
+#    token — the dashboard shares StrikeShield's own JWT auth).
+curl -s localhost:8085/api/scan-schedules/$SCHEDULE_ID -H "$AUTH" | jq .
+# lastFiredAt/lastFireOutcome/lastTriggeredScanJobId populate once it fires;
+# a schedule against an unapproved/expired engagement instead gets
+# lastFireOutcome: "Skipped" and a lastSkipReason explaining why — it never
+# throws or retries silently.
+
+# 3. Point a Slack incoming-webhook (or any URL that logs POSTs — a local
+#    receiver, requestbin, an ngrok-free tunnel) at your organization:
+curl -s -X POST localhost:8085/api/integrations -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"organizationId\":\"$ORG_ID\",\"type\":\"Slack\",\"notifyOnScanCompletion\":true,\"notifyOnCriticalFinding\":true,\"webhookUrl\":\"https://your-receiver.example/webhook\"}"
+
+# 4. Launch (or wait for the schedule to fire) a scan against that
+#    engagement — once it reaches Completed/Failed, your receiver gets a
+#    scan-completion POST, plus a separate critical-findings POST if any
+#    Critical-severity findings were ingested.
+```
+
+**Acceptance:** the recurring job fires on schedule (observable via the
+Hangfire dashboard's "Recurring Jobs"/"Succeeded" tabs and via
+`ScanJob` history for the engagement), the configured receiver gets a
+notification within one cycle, and a schedule pointed at an unapproved or
+expired engagement demonstrably skips (`lastFireOutcome: "Skipped"`,
+`lastSkipReason` populated) instead of creating a `ScanJob` —
+`ScanScheduleServiceTests.cs` proves the fire-time gate deterministically;
+`NotificationDispatcherTests.cs` proves delivery is fanned out per-Integration
+and that a failing channel never propagates back to the caller.
+
 ## Solution layout
 
 ```
 src/
   StrikeShield.Domain/          entities, enums, and the scope-gate business rule
-  StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing), finding adapters + Correlator
-  StrikeShield.Infrastructure/  EF Core + Postgres, migrations, seeding, health checks
+  StrikeShield.Application/     use cases, DTOs, auth (JWT + password hashing), finding adapters + Correlator,
+                                 ScanSchedule fire-time gate, NotificationDispatcher
+  StrikeShield.Infrastructure/  EF Core + Postgres, migrations, seeding, health checks, Hangfire recurring-job
+                                 registration, Slack/webhook/GitHub notification channels
   StrikeShield.Api/             ASP.NET Core Web API host, JWT wiring, endpoints
   StrikeShield.Orchestrator/    Docker.DotNet worker: runs playbook steps as isolated containers
 tests/

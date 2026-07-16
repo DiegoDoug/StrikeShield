@@ -1,6 +1,9 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Hangfire;
+using Hangfire.Dashboard;
+using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -29,6 +32,19 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddApplication();
+
+// Cron-based recurring ScanJobs + the (auth-gated) dashboard mounted below
+// (docs/PHASED_PLAN.md Phase 8). Same Postgres instance/connection string
+// as EF Core — no new infra dependency.
+var hangfireConnectionString = builder.Configuration.GetConnectionString("Postgres")
+    ?? throw new InvalidOperationException("Missing required connection string 'ConnectionStrings:Postgres'.");
+
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(c => c.UseNpgsqlConnection(hangfireConnectionString)));
+builder.Services.AddHangfireServer();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -72,6 +88,13 @@ app.UseSwaggerUI();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Auth-gated per docs/PHASED_PLAN.md Phase 8 — JwtAuthenticatedDashboardAuthorizationFilter
+// requires an authenticated request, same as every other endpoint below.
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new JwtAuthenticatedDashboardAuthorizationFilter() }
+});
+
 app.MapHealthChecks("/health", new HealthCheckOptions
 {
     ResponseWriter = WriteHealthCheckResponse
@@ -87,6 +110,8 @@ app.MapTargetsEndpoints();
 app.MapEngagementsEndpoints();
 app.MapPlaybooksEndpoints();
 app.MapScanJobsEndpoints();
+app.MapScanSchedulesEndpoints();
+app.MapIntegrationsEndpoints();
 
 app.Run();
 

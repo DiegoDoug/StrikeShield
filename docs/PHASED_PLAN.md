@@ -12,7 +12,7 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phases 0-7 implemented** (see repo root). Phase 8+ are
+Status: **Phases 0-8 implemented** (see repo root). Phase 9+ are
 specified below, ready to build next.
 
 ---
@@ -401,7 +401,7 @@ call, same as Phase 6's fixture tests).
 
 ---
 
-## Phase 8 — Scheduling & integrations
+## Phase 8 — Scheduling & integrations ✅
 
 **Goal:** "Scheduling" and "automation" from your prompt.
 

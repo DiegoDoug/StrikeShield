@@ -41,11 +41,16 @@ public static class DependencyInjection
         // means the Correlator's escalation pass and the Adaptive Planner
         // simply have nothing to run against, so NullLlmClient is
         // registered instead of a real HTTP-calling client — every other
-        // feature keeps working without one.
+        // feature keeps working without one. AiOrchestration:LlmProvider
+        // picks which HTTP-calling client to register when a key is set.
         var llmApiKey = configuration["AiOrchestration:LlmApiKey"];
         if (string.IsNullOrWhiteSpace(llmApiKey))
         {
             services.AddSingleton<ILlmClient>(NullLlmClient.Instance);
+        }
+        else if (string.Equals(configuration["AiOrchestration:LlmProvider"], "deepseek", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddHttpClient<ILlmClient, DeepSeekLlmClient>();
         }
         else
         {

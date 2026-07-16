@@ -53,6 +53,11 @@ services:
       # meaningful report to generate with no LLM to write the narrative).
       AiOrchestration__LlmModel: "${STRIKESHIELD_AI_LLM_MODEL:-claude-sonnet-4-6}"
       AiOrchestration__LlmApiKey: "${STRIKESHIELD_AI_LLM_API_KEY:-}"
+      # The frontend (docs/PHASED_PLAN.md Phase 9) is same-origin through
+      # its own nginx proxy (see frontend/nginx.conf), so this only matters
+      # if something hits the Api directly from a browser on a different
+      # origin — e.g. `npm run dev`'s Vite server on 5173.
+      Cors__AllowedOrigins: "${STRIKESHIELD_CORS_ORIGINS:-http://localhost:5173,http://localhost:${STRIKESHIELD_FRONTEND_PORT:-8080}}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +76,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - strikeshield-net
+
+  # React + TS SPA (docs/PHASED_PLAN.md Phase 9) — built once, served by
+  # nginx, which reverse-proxies /api and /hubs to the api service (see
+  # frontend/nginx.conf) so the browser only ever talks to one origin.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${STRIKESHIELD_FRONTEND_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
       - strikeshield-net
 

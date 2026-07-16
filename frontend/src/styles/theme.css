@@ -1,0 +1,85 @@
+/*
+  StrikeShield — Tailwind v4 theme layer
+  ---------------------------------------------------------------
+  Tailwind v4 is CSS-first: no tailwind.config.js needed. Import
+  tokens.css, then this file, then Tailwind itself, in that order.
+
+  In your main entry CSS:
+
+    @import "./tokens.css";
+    @import "./theme.css";
+    @import "tailwindcss";
+
+  This unlocks utilities like bg-base, text-flare, border-hairline,
+  rounded-ss, font-mono-ss, etc. — all bound to the CSS variables in
+  tokens.css, so switching data-theme="light" repaints everything
+  with zero class changes.
+
+  If the Replit project is on Tailwind v3 instead, skip this file
+  and paste the equivalent `extend` block from theme-v3.snippet.js.
+*/
+
+@theme {
+  /* Color */
+  --color-base: var(--ss-bg-base);
+  --color-surface: var(--ss-bg-surface);
+  --color-elevated: var(--ss-bg-elevated);
+  --color-sunken: var(--ss-bg-sunken);
+  --color-hairline: var(--ss-border-hairline);
+  --color-border-strong: var(--ss-border-strong);
+
+  --color-primary: var(--ss-text-primary);
+  --color-secondary: var(--ss-text-secondary);
+  --color-tertiary: var(--ss-text-tertiary);
+  --color-on-accent: var(--ss-text-on-accent);
+
+  --color-flare: var(--ss-flare);
+  --color-flare-hover: var(--ss-flare-hover);
+  --color-flare-active: var(--ss-flare-active);
+  --color-flare-muted: var(--ss-flare-muted-bg);
+
+  --color-sev-critical: var(--ss-sev-critical);
+  --color-sev-critical-bg: var(--ss-sev-critical-bg);
+  --color-sev-high: var(--ss-sev-high);
+  --color-sev-high-bg: var(--ss-sev-high-bg);
+  --color-sev-medium: var(--ss-sev-medium);
+  --color-sev-medium-bg: var(--ss-sev-medium-bg);
+  --color-sev-low: var(--ss-sev-low);
+  --color-sev-low-bg: var(--ss-sev-low-bg);
+  --color-sev-info: var(--ss-sev-info);
+  --color-sev-info-bg: var(--ss-sev-info-bg);
+
+  --color-status-queued: var(--ss-status-queued);
+  --color-status-running: var(--ss-status-running);
+  --color-status-completed: var(--ss-status-completed);
+  --color-status-failed: var(--ss-status-failed);
+  --color-status-timedout: var(--ss-status-timedout);
+
+  /* Type */
+  --font-sans: var(--ss-font-sans);
+  --font-mono: var(--ss-font-mono);
+
+  --text-xs: var(--ss-text-xs);
+  --text-sm: var(--ss-text-sm);
+  --text-base: var(--ss-text-base);
+  --text-md: var(--ss-text-md);
+  --text-lg: var(--ss-text-lg);
+  --text-xl: var(--ss-text-xl);
+  --text-2xl: var(--ss-text-2xl);
+  --text-display: var(--ss-text-display);
+
+  /* Radius */
+  --radius-sm: var(--ss-radius-sm);
+  --radius-md: var(--ss-radius-md);
+  --radius-full: var(--ss-radius-full);
+
+  /* Shadow */
+  --shadow-ss-sm: var(--ss-shadow-sm);
+  --shadow-ss-md: var(--ss-shadow-md);
+  --shadow-flare-glow: var(--ss-shadow-flare-glow);
+
+  /* Layout */
+  --spacing-nav: var(--ss-nav-width);
+  --spacing-nav-collapsed: var(--ss-nav-width-collapsed);
+  --spacing-header: var(--ss-header-height);
+}

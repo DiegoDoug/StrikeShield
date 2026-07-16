@@ -1,0 +1,51 @@
+@import "./styles/tokens.css";
+@import "./styles/theme.css";
+@import "tailwindcss";
+
+@layer base {
+  * {
+    border-color: var(--ss-border-hairline);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--ss-bg-base);
+    color: var(--ss-text-primary);
+    font-family: var(--ss-font-sans);
+    font-size: var(--ss-text-base);
+    line-height: var(--ss-leading-normal);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: var(--ss-flare-muted-bg);
+    color: var(--ss-text-primary);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--ss-border-strong);
+    border-radius: var(--ss-radius-full);
+    border: 2px solid var(--ss-bg-base);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--ss-shadow-flare-glow);
+    border-radius: var(--ss-radius-sm);
+  }
+}

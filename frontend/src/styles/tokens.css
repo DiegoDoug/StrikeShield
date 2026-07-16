@@ -1,0 +1,178 @@
+/*
+  StrikeShield Design Tokens
+  ---------------------------------------------------------------
+  Concept: STRIKE / SHIELD.
+  Every color decision below traces back to this split:
+    SHIELD = the console itself. Cold, structural, graphite steel.
+             Stable, quiet, never competes for attention.
+    STRIKE = the one thing that's alive. A single hot ember accent,
+             reserved ONLY for active/kinetic states: primary actions,
+             a running scan, the brand mark. If you see the accent
+             color, something on screen is doing something.
+  Severity and job-status colors are deliberately a notch more
+  muted/deep than the brand accent — the accent must always read as
+  the brightest thing in the UI, or the "something is live" signal
+  stops working. Don't reach for the accent on anything static.
+*/
+
+:root {
+  color-scheme: dark;
+
+  /* ---------- SHIELD: structural neutrals (dark, default) ---------- */
+  --ss-bg-base: #0b0e11;       /* app background — near-black, blue-graphite, never pure #000 */
+  --ss-bg-surface: #12161b;    /* panels, sidebar, table body */
+  --ss-bg-elevated: #1a1f26;   /* popovers, modals, dropdown menus */
+  --ss-bg-sunken: #080a0c;     /* code/log panels, inset wells */
+  --ss-border-hairline: #232a32; /* default dividers — the workhorse border */
+  --ss-border-strong: #333c47;   /* focus rings, active dividers, input borders on focus */
+
+  --ss-text-primary: #e8ecef;
+  --ss-text-secondary: #9aa4af;
+  --ss-text-tertiary: #5b6673;
+  --ss-text-on-accent: #0b0e11; /* text sitting on top of the flare accent */
+
+  /* ---------- STRIKE: the single locked brand accent ---------- */
+  --ss-flare: #ff4b26;
+  --ss-flare-hover: #ff6b45;
+  --ss-flare-active: #e8390f;
+  --ss-flare-muted-bg: #2a160f; /* tinted bg for active nav items, selected rows */
+  --ss-flare-ring: rgba(255, 75, 38, 0.35); /* focus ring on flare controls */
+
+  /* ---------- Severity scale (findings) — always icon + label, never color alone ---------- */
+  --ss-sev-critical: #dc2626;
+  --ss-sev-critical-bg: #2a1010;
+  --ss-sev-high: #ea580c;
+  --ss-sev-high-bg: #291608;
+  --ss-sev-medium: #ca8a04;
+  --ss-sev-medium-bg: #241d06;
+  --ss-sev-low: #0284c7;
+  --ss-sev-low-bg: #0a1a24;
+  --ss-sev-info: #64748b;
+  --ss-sev-info-bg: #171b20;
+
+  /* ---------- Job / step status (distinct from severity) ---------- */
+  --ss-status-queued: #64748b;
+  --ss-status-running: var(--ss-flare); /* the only status that borrows the brand accent — it's the one that's "live" */
+  --ss-status-completed: #16a34a;       /* the only green in the whole system, reserved for success */
+  --ss-status-failed: #991b1b;
+  --ss-status-timedout: #ca8a04;
+
+  /* ---------- Typography ---------- */
+  --ss-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ss-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --ss-text-xs: 0.6875rem;   /* 11px — table meta, timestamps */
+  --ss-text-sm: 0.78125rem;  /* 12.5px — table body, badges */
+  --ss-text-base: 0.875rem;  /* 14px — default UI text */
+  --ss-text-md: 0.9375rem;   /* 15px — form labels, nav items */
+  --ss-text-lg: 1.125rem;    /* 18px — panel headings */
+  --ss-text-xl: 1.375rem;    /* 22px — page titles */
+  --ss-text-2xl: 1.75rem;    /* 28px — section titles (reports) */
+  --ss-text-display: 2.125rem; /* 34px — dashboard stat numbers only */
+
+  --ss-leading-tight: 1.15;
+  --ss-leading-normal: 1.45;
+  --ss-tracking-tight: -0.01em;
+  --ss-tracking-wide: 0.06em; /* uppercase micro-labels only */
+
+  /* ---------- Spacing (4px base unit — dense app rhythm, not landing-page air) ---------- */
+  --ss-space-1: 0.25rem;
+  --ss-space-2: 0.5rem;
+  --ss-space-3: 0.75rem;
+  --ss-space-4: 1rem;
+  --ss-space-5: 1.25rem;
+  --ss-space-6: 1.5rem;
+  --ss-space-8: 2rem;
+  --ss-space-10: 2.5rem;
+  --ss-space-12: 3rem;
+  --ss-space-16: 4rem;
+
+  /* ---------- Shape (locked scale — see DESIGN_SYSTEM.md §Shape) ---------- */
+  --ss-radius-sm: 4px;   /* inputs, checkboxes */
+  --ss-radius-md: 6px;   /* buttons, cards, panels, modals */
+  --ss-radius-full: 999px; /* badges, pills, avatars, status chips ONLY */
+  --ss-radius-table: 0px;  /* table cells are always sharp */
+
+  /* ---------- Elevation (tinted, never pure black — used sparingly, hairlines do most of the work) ---------- */
+  --ss-shadow-sm: 0 1px 2px rgba(4, 6, 8, 0.5);
+  --ss-shadow-md: 0 4px 16px rgba(4, 6, 8, 0.55);
+  --ss-shadow-flare-glow: 0 0 0 3px var(--ss-flare-ring);
+
+  /* ---------- Motion (dial: MOTION_INTENSITY 4/10 — fluid, functional, never decorative) ---------- */
+  --ss-ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --ss-duration-fast: 120ms;
+  --ss-duration-base: 200ms;
+  --ss-duration-slow: 320ms;
+
+  /* ---------- Layout constants ---------- */
+  --ss-nav-width: 240px;
+  --ss-nav-width-collapsed: 64px;
+  --ss-header-height: 56px;
+  --ss-content-max-width: 1600px;
+  --ss-report-max-width: 760px; /* the one screen that intentionally breathes — see DESIGN_SYSTEM.md */
+
+  /* ---------- Z-index scale ---------- */
+  --ss-z-nav: 100;
+  --ss-z-header: 110;
+  --ss-z-dropdown: 200;
+  --ss-z-modal: 300;
+  --ss-z-toast: 400;
+}
+
+/* ---------- Light mode — same structure, same accent, inverted neutrals ----------
+   Security consoles default dark (long monitoring sessions), but StrikeShield
+   supports both per the dark-mode-protocol: one theme, locked per page load,
+   never inverted mid-scroll. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --ss-bg-base: #f7f8f9;
+  --ss-bg-surface: #ffffff;
+  --ss-bg-elevated: #ffffff;
+  --ss-bg-sunken: #eef0f2;
+  --ss-border-hairline: #e2e5e9;
+  --ss-border-strong: #c7ccd2;
+
+  --ss-text-primary: #14181d;
+  --ss-text-secondary: #4b5560;
+  --ss-text-tertiary: #7c868f;
+  --ss-text-on-accent: #fffaf8;
+
+  --ss-flare: #e8390f;       /* deepened slightly for AA contrast on white */
+  --ss-flare-hover: #ff4b26;
+  --ss-flare-active: #c8300c;
+  --ss-flare-muted-bg: #fdece7;
+  --ss-flare-ring: rgba(232, 57, 15, 0.25);
+
+  --ss-sev-critical: #b91c1c;
+  --ss-sev-critical-bg: #fef2f2;
+  --ss-sev-high: #c2410c;
+  --ss-sev-high-bg: #fff2ea;
+  --ss-sev-medium: #a16207;
+  --ss-sev-medium-bg: #fefaea;
+  --ss-sev-low: #0369a1;
+  --ss-sev-low-bg: #eef8ff;
+  --ss-sev-info: #475569;
+  --ss-sev-info-bg: #f1f3f5;
+
+  --ss-status-completed: #15803d;
+  --ss-status-failed: #b91c1c;
+
+  --ss-shadow-sm: 0 1px 2px rgba(20, 24, 29, 0.08);
+  --ss-shadow-md: 0 8px 24px rgba(20, 24, 29, 0.1);
+  --ss-shadow-flare-glow: 0 0 0 3px var(--ss-flare-ring);
+}
+
+/* ---------- Live/running pulse — the ONE motivated ambient animation.
+   Communicates "actively executing" on scan jobs and step runs.
+   Nothing else in the system pulses. ---------- */
+@keyframes ss-pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.ss-live-dot {
+  animation: ss-pulse-live 1.6s var(--ss-ease-standard) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ss-live-dot { animation: none; opacity: 1; }
+}

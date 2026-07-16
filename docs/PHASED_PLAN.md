@@ -12,7 +12,7 @@ Ground rules for every phase:
   (e.g. OWASP Juice Shop / DVWA, spun up as throwaway compose services —
   see Phase 2). Never point active-scan phases at third-party infrastructure.
 
-Status: **Phases 0-8 implemented** (see repo root). Phase 9+ are
+Status: **Phases 0-9 implemented** (see repo root). Phase 10+ are
 specified below, ready to build next.
 
 ---
@@ -426,7 +426,7 @@ demonstrably skips with a logged reason instead of running.
 
 ---
 
-## Phase 9 — Frontend (React) for the full lifecycle
+## Phase 9 — Frontend (React) for the full lifecycle ✅
 
 **Goal:** You can do everything above from a browser, not just curl/Swagger.
 
@@ -444,6 +444,13 @@ the same flow headlessly (`docker compose -f docker-compose.e2e.yml up`).
 client → project → target → engagement approval → launch a playbook →
 watch it run → triage findings → generate and download a report, entirely
 through the UI.
+
+> **Implementation note:** the manual E2E click-through above is done (see
+> README.md's "Current status" for what shipped, including the two backend
+> additions — `PATCH /api/findings/{id}` and the SignalR progress hub —
+> the frontend needed that didn't exist yet). The headless Playwright suite
+> against `docker-compose.e2e.yml` is **not** built yet; that's the one
+> open item against this phase's stated acceptance criteria.
 
 ---
 

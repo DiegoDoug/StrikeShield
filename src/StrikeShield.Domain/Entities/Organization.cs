@@ -8,4 +8,5 @@ public class Organization
 
     public ICollection<Client> Clients { get; set; } = new List<Client>();
     public ICollection<AppUser> Users { get; set; } = new List<AppUser>();
+    public ICollection<Integration> Integrations { get; set; } = new List<Integration>();
 }

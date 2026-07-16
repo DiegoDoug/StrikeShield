@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StrikeShield.Application.Findings;
+using StrikeShield.Application.Notifications;
 using StrikeShield.Application.Playbooks;
 using StrikeShield.Domain.Entities;
 using StrikeShield.Domain.Enums;
@@ -34,6 +35,7 @@ public class PlaybookExecutor : IPlaybookExecutor
     private readonly IFindingIngestionService _findingIngestionService;
     private readonly ICorrelator _correlator;
     private readonly IAdaptivePlanner _adaptivePlanner;
+    private readonly INotificationDispatcher _notificationDispatcher;
     private readonly OrchestratorOptions _options;
     private readonly ILogger<PlaybookExecutor> _logger;
 
@@ -43,6 +45,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         IFindingIngestionService findingIngestionService,
         ICorrelator correlator,
         IAdaptivePlanner adaptivePlanner,
+        INotificationDispatcher notificationDispatcher,
         IOptions<OrchestratorOptions> options,
         ILogger<PlaybookExecutor> logger)
     {
@@ -51,6 +54,7 @@ public class PlaybookExecutor : IPlaybookExecutor
         _findingIngestionService = findingIngestionService;
         _correlator = correlator;
         _adaptivePlanner = adaptivePlanner;
+        _notificationDispatcher = notificationDispatcher;
         _options = options.Value;
         _logger = logger;
     }
@@ -282,6 +286,12 @@ public class PlaybookExecutor : IPlaybookExecutor
 
         scanJob.Status = anyStepFailed ? ScanJobStatus.Failed : ScanJobStatus.Completed;
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Best-effort — DispatchForCompletedScanJobAsync swallows and logs
+        // its own per-integration delivery failures (docs/PHASED_PLAN.md
+        // Phase 8), but a no-op with no Integrations configured is also a
+        // perfectly normal outcome here.
+        await _notificationDispatcher.DispatchForCompletedScanJobAsync(scanJob.Id, cancellationToken);
     }
 
     private async Task<StepExecutionResult> RunStepContainerAsync(

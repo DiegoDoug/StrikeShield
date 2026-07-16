@@ -20,6 +20,28 @@ every phase ships something you can `git pull` and verify with
 
 ## Current status
 
+**Phase 9: the React frontend.** A Vite + React + TypeScript SPA
+(`frontend/`) covers the full operator lifecycle from a browser: log in,
+manage clients → projects → targets, create and approve engagements,
+browse playbooks as a visual dependency DAG, launch scans through a wizard
+that surfaces the scope/approval gate and budget-relevant playbook detail
+*before* submitting (not just relying on the server's 403), watch a running
+scan's step DAG update live, triage findings with severity/status filters
+and inline status transitions, generate and download all 4 report types,
+manage recurring schedules, and configure Slack/webhook/GitHub
+integrations. Styled with the StrikeShield design tokens (Tailwind v4
+CSS-first `@theme`, `frontend/src/styles/tokens.css` +
+`frontend/src/styles/theme.css`) — dark by default, a light theme toggle,
+the single "flare" accent reserved for live/primary-action states only.
+Two backend additions this phase required: `PATCH /api/findings/{id}` (the
+triage board's status transitions had no endpoint before) and a SignalR
+hub (`/hubs/scan-progress`, `StrikeShield.Api/Hubs`) — a background service
+polls active `ScanJob`s and pushes step updates to subscribed clients; the
+UI falls back to REST polling if the WebSocket connection never comes up.
+Served in the Compose stack by its own nginx container, reverse-proxying
+`/api` and `/hubs` to the `api` service so the browser only ever talks to
+one origin — see "Frontend" under Quick start below.
+
 **Phase 8: scheduling & integrations.** Hangfire (Postgres-backed storage,
 no new infra dependency) adds cron-based recurring `ScanJob`s per
 `Engagement` — `ScanScheduleService.FireAsync` re-checks the Phase 1 scope/
@@ -159,6 +181,22 @@ curl -s http://localhost:8085/health | jq
 ```
 
 Swagger UI: http://localhost:8085/swagger
+
+**Frontend:** http://localhost:8080 (the `frontend` service in
+`docker-compose.yml` — nginx serving the built SPA, reverse-proxying `/api`
+and `/hubs` to `api:8085`). Log in with the seeded admin
+(`SeedAdmin:Email`/`SeedAdmin:Password` — `admin@strikeshield.local` /
+`ChangeMe123!` by default, see `.env.example`).
+
+For frontend-only iteration without rebuilding the container on every
+change:
+
+```bash
+docker compose up -d postgres redis api   # backend only
+cd frontend
+npm install
+npm run dev   # http://localhost:5173, proxies /api and /hubs to :8085
+```
 
 > **Port already in use?** If `docker compose up` fails with
 > `Bind for 0.0.0.0:8085 failed: port is already allocated` (or the same for

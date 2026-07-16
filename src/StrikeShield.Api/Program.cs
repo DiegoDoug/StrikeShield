@@ -10,6 +10,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using StrikeShield.Api.Endpoints;
+using StrikeShield.Api.Hubs;
 using StrikeShield.Api.Middleware;
 using StrikeShield.Application;
 using StrikeShield.Infrastructure;
@@ -70,8 +71,57 @@ builder.Services
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(30)
         };
+        // Browsers can't set an Authorization header on a WebSocket
+        // upgrade request, so @microsoft/signalr sends the JWT as an
+        // "access_token" query param instead for hub connections
+        // specifically (docs/PHASED_PLAN.md Phase 9 — live progress).
+        // Every other endpoint keeps using the Authorization header.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            }
+        };
     });
 builder.Services.AddAuthorization();
+
+// The React SPA (docs/PHASED_PLAN.md Phase 9) is served from a different
+// origin than the Api in dev (Vite on 5173) and in the Docker Compose
+// stack (nginx on its own port) — see .env.example for
+// STRIKESHIELD_CORS_ORIGINS. AllowCredentials is required for the
+// SignalR hub connection below.
+var corsOrigins = (builder.Configuration["Cors:AllowedOrigins"] ?? "http://localhost:5173,http://localhost:8080")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy => policy
+        .WithOrigins(corsOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
+});
+
+// SignalR's hub protocol has its own JSON serializer options, entirely
+// separate from ConfigureHttpJsonOptions above (which only applies to
+// minimal-API/MVC responses) — without this, ScanJobProgressPayload's
+// enums (ScanJobStatus, StepRunStatus) go over the wire as raw integers
+// instead of the string names every REST response and the frontend's TS
+// types expect, and the frontend crashes trying to look up e.g. `1`
+// instead of `"Running"` in its status-badge config maps.
+builder.Services.AddSignalR().AddJsonProtocol(options =>
+{
+    options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
+builder.Services.AddHostedService<ScanProgressBroadcastService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -84,6 +134,8 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
+app.UseCors("Frontend");
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -110,8 +162,11 @@ app.MapTargetsEndpoints();
 app.MapEngagementsEndpoints();
 app.MapPlaybooksEndpoints();
 app.MapScanJobsEndpoints();
+app.MapFindingsEndpoints();
 app.MapScanSchedulesEndpoints();
 app.MapIntegrationsEndpoints();
+
+app.MapHub<ScanProgressHub>("/hubs/scan-progress");
 
 app.Run();
 

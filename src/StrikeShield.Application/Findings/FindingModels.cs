@@ -37,3 +37,5 @@ public record FindingResponse(
         entity.FirstSeenAt,
         entity.LastSeenAt);
 }
+
+public record UpdateFindingStatusRequest(FindingStatus Status);
